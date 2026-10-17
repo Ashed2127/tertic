@@ -19,11 +19,11 @@ if [ ! -d "/data/data/com.termux" ]; then
 fi
 
 echo -e "${GREEN}[1/4] Installing dependencies...${NC}"
-pkg install -y curl tar python3
+pkg install -y curl tar
 
 echo -e "${GREEN}[2/4] Downloading Devin CLI official installer...${NC}"
-# Download the official install script
-INSTALL_SCRIPT="/tmp/devin-install.sh"
+# Download the official install script to home directory (tmp might have issues on Android)
+INSTALL_SCRIPT="$HOME/devin-install.sh"
 curl -fsSL https://cli.devin.ai/install.sh -o "$INSTALL_SCRIPT"
 
 if [ ! -f "$INSTALL_SCRIPT" ]; then
@@ -33,15 +33,8 @@ fi
 
 echo -e "${GREEN}[3/4] Patching installer for Android...${NC}"
 # Patch the installer to recognize Android as Linux
-# Use Python to do the replacement cleanly
-python3 << 'PYTHON_SCRIPT'
-with open('/tmp/devin-install.sh', 'r') as f:
-    content = f.read()
-# Replace Android with Linux in the detect_target function
-content = content.replace('os=$(uname -s)', 'os=$(uname -s | sed "s/Android/Linux/")')
-with open('/tmp/devin-install.sh', 'w') as f:
-    f.write(content)
-PYTHON_SCRIPT
+# Use a different delimiter for sed to avoid escaping issues
+sed -i 's|os=$(uname -s)|os=$(uname -s | sed "s/Android/Linux/")|' "$INSTALL_SCRIPT"
 
 echo -e "${GREEN}[4/4] Running patched installer...${NC}"
 # Run the patched installer
