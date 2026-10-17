@@ -1,0 +1,31 @@
+# Tertic - Optimized AI Agent Dependencies for Android/Termux
+# These are lightweight versions optimized for mobile ARM processors
+
+# Core dependencies (minimal, fast)
+aiohttp>=3.9.0
+aiosqlite>=0.20.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Terminal UI (lightweight)
+rich>=13.0.0
+prompt-toolkit>=3.0.0
+
+# AI Agent frameworks (choose what you need)
+# OpenAI
+openai>=1.0.0
+
+# Anthropic
+anthropic>=0.18.0
+
+# LangChain (core only - lightweight)
+langchain-core>=0.1.0
+langchain-openai>=0.0.5
+
+# Optional: Vector search (heavier - install separately if needed)
+# sentence-transformers
+# faiss-cpu
+
+# Optional: Advanced features (install separately if needed)
+# langchain>=0.1.0
+# textual>=0.50.0
