@@ -50,7 +50,7 @@ else
 
     echo -e "${GREEN}[*] Installing Ubuntu in proot-distro...${NC}"
     # Check if Ubuntu container already exists
-    if proot-distro list 2>/dev/null | grep -qw "ubuntu"; then
+    if proot-distro list 2>/dev/null | grep -q "^\s*\* ubuntu"; then
         echo -e "${YELLOW}Ubuntu container already exists, skipping installation.${NC}"
     else
         proot-distro install ubuntu
