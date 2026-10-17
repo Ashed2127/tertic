@@ -24,10 +24,10 @@ pkg update -y
 pkg upgrade -y
 
 echo -e "${GREEN}[2/8] Installing core dependencies...${NC}"
-pkg install -y python git curl wget neovim htop tree unzip
+pkg install -y python git curl wget
 
 echo -e "${GREEN}[3/8] Installing Python development tools...${NC}"
-pkg install -y python-pip python-build
+pkg install -y python-pip
 
 echo -e "${GREEN}[4/8] Installing UV (fast Python package manager)...${NC}"
 curl -LsSf https://astral.sh/uv/install.sh | sh
