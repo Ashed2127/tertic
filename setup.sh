@@ -3,7 +3,7 @@
 set -e
 
 echo "=========================================="
-echo "   Tertic - Optimized for Devin CLI on Android"
+echo "   Tertic - Optimized Termux for Android"
 echo "=========================================="
 echo ""
 
@@ -23,7 +23,7 @@ echo -e "${GREEN}[1/5] Updating Termux packages...${NC}"
 pkg update -y
 pkg upgrade -y
 
-echo -e "${GREEN}[2/5] Installing core dependencies for Devin CLI...${NC}"
+echo -e "${GREEN}[2/5] Installing core dependencies...${NC}"
 pkg install -y git curl tar python nodejs
 
 echo -e "${GREEN}[3/5] Configuring Termux storage access...${NC}"
@@ -39,9 +39,9 @@ if ! grep -q "~/.local/bin" ~/.bashrc; then
 fi
 
 echo -e "${GREEN}[5/5] Applying mobile optimizations...${NC}"
-# Create optimized config for Devin CLI
+# Create optimized config
 cat > ~/.tertic-config << 'EOF'
-# Tertic Configuration for Devin CLI
+# Tertic Configuration
 export PYTHONUNBUFFERED=1
 export PYTHONDONTWRITEBYTECODE=1
 export EDITOR=nano
@@ -60,11 +60,12 @@ echo -e "==========================================${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Restart Termux"
-echo "2. Install Devin CLI: bash ~/tertic/install-devin.sh"
-echo "3. Login to Devin: devin auth login"
-echo "4. Run Devin in a project: cd your-project && devin"
+echo "2. Run: bash ~/tertic/advanced-setup.sh (for more tools)"
+echo "3. Start coding!"
 echo ""
-echo -e "${YELLOW}Optional: Install Node.js/Python tools:${NC}"
-echo "  pkg install nodejs python"
-echo "  npm install -g typescript prettier eslint"
+echo -e "${YELLOW}Available tools:${NC}"
+echo "  python, nodejs, git, nano"
+echo ""
+echo -e "${YELLOW}Optional tools (advanced-setup.sh):${NC}"
+echo "  tmux, ripgrep, fzf, neovim, black, prettier"
 echo ""
