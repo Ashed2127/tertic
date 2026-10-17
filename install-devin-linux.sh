@@ -49,13 +49,13 @@ else
     pkg install -y proot-distro
 
     echo -e "${GREEN}[*] Installing Ubuntu in proot-distro...${NC}"
-    # Try to install Ubuntu, suppress errors if it already exists
-    proot-distro install ubuntu 2>/dev/null || true
+    # Reset Ubuntu to ensure clean DNS configuration
+    proot-distro reset ubuntu --overwrite 2>/dev/null || proot-distro install ubuntu 2>/dev/null || true
     echo "Ubuntu setup complete."
 
     echo -e "${GREEN}[*] Installing curl and Devin CLI in Ubuntu...${NC}"
-    # Use --bind option to share Termux DNS with Ubuntu
-    proot-distro login ubuntu --bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf -- bash -c "apt update && apt install -y curl && curl -fsSL https://cli.devin.ai/install.sh | bash"
+    # Configure DNS in Ubuntu and install
+    proot-distro login ubuntu -- bash -c "echo 'nameserver 8.8.8.8' > /etc/resolv.conf && echo 'nameserver 8.8.4.4' >> /etc/resolv.conf && apt update && apt install -y curl && curl -fsSL https://cli.devin.ai/install.sh | bash"
 
     echo -e "${GREEN}[*] Creating shortcut to run Devin...${NC}"
     # Create a wrapper script to easily run Devin from Ubuntu
