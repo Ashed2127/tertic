@@ -27,7 +27,12 @@ echo -e "${GREEN}[2/5] Installing core dependencies...${NC}"
 pkg install -y git curl tar python nodejs
 
 echo -e "${GREEN}[3/5] Configuring Termux storage access...${NC}"
-termux-setup-storage
+# Check if storage is already configured
+if [ ! -d "$HOME/storage" ]; then
+    termux-setup-storage
+else
+    echo "Storage already configured, skipping..."
+fi
 
 echo -e "${GREEN}[4/5] Setting up development environment...${NC}"
 # Create bin directory

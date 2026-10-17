@@ -22,19 +22,19 @@ export PATH="$HOME/.local/bin:$PATH"
 
 echo -e "${GREEN}Environment ready!${NC}"
 echo ""
-echo -e "${YELLOW}Check tools:${NC}"
-echo "  python --version"
-python --version
-echo "  node --version"
-node --version
-echo "  git --version"
-git --version
+echo -e "${YELLOW}Check Devin CLI:${NC}"
+if [ -f "$HOME/devin" ]; then
+    echo "  devin --version"
+    ~/devin --version
+else
+    echo "  Devin CLI not installed. Run: bash ~/tertic/install-devin-linux.sh"
+fi
 echo ""
 echo -e "${YELLOW}Available commands:${NC}"
-echo "  python                  - Run Python"
-echo "  node                    - Run Node.js"
-echo "  nano <file>             - Edit files"
-echo "  git                     - Version control"
+echo "  devin                  - Start Devin CLI"
+echo "  devin auth login       - Login to Devin"
+echo "  python                 - Run Python"
+echo "  node                   - Run Node.js"
 echo ""
 echo -e "${YELLOW}For more tools:${NC}"
 echo "  bash ~/tertic/advanced-setup.sh"

@@ -39,7 +39,7 @@ set -g status-right "%H:%M "
 EOF
 
 echo -e "${GREEN}Installing common Python packages...${NC}"
-pip install --upgrade pip
+# Don't upgrade pip in Termux (it's managed by Termux)
 pip install black pylint mypy requests
 
 echo -e "${GREEN}Installing common Node.js packages...${NC}"

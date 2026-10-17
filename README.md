@@ -1,15 +1,15 @@
 # Tertic
 
-**Optimized Termux setup for coding on Android phones.**
+**Run Devin AI CLI on your Android phone - yes, it's possible! 🚀**
 
-⚠️ **Important**: Devin CLI's official binary is compiled for Linux (glibc) and won't run on Android (bionic). This project provides an optimized Termux environment for development, but Devin CLI itself is not currently supported on Android.
+Tertic sets up Ubuntu inside Termux using proot-distro, providing a full glibc Linux environment where Devin CLI runs perfectly.
 
-## What Tertic Provides
+## How It Works
 
-- Optimized Termux configuration for coding
-- Development tools (git, nodejs, python, tmux, etc.)
-- Terminal utilities (ripgrep, fzf, neovim)
-- Mobile-friendly settings and keyboard shortcuts
+- **Termux** provides the Android terminal
+- **proot-distro** runs Ubuntu inside Termux
+- **Ubuntu** has glibc (like regular Linux)
+- **Devin CLI** runs in that Ubuntu environment
 
 ## Setup
 
@@ -24,33 +24,30 @@
    bash setup.sh
    ```
 
-3. **Optional: Advanced tools**:
+3. **Install Devin CLI**:
    ```bash
-   bash advanced-setup.sh
+   bash install-devin-linux.sh
+   ```
+   This installs Ubuntu (~500MB) and Devin CLI inside it.
+
+4. **Run Devin**:
+   ```bash
+   cd your-project
+   devin
    ```
 
-## Available Tools
+## What You Get
 
-After setup, you'll have:
-- **Languages**: Python, Node.js
-- **Editors**: Nano, Neovim
-- **Tools**: Git, curl, wget, tar
-- **Advanced (optional)**: tmux, ripgrep, fzf, htop, black, prettier
+- **Devin CLI** - Full AI coding agent on your phone!
+- **Ubuntu environment** - Full Linux compatibility
+- **Development tools** - Python, Node.js, git, etc.
+- **Optimized Termux** - Mobile-friendly configuration
 
-## Why Devin CLI Doesn't Work on Android
+## Performance Tips
 
-Devin CLI is compiled for Linux with glibc. Android uses bionic, a different C library. While both use ARM64, the binary won't run due to library incompatibilities.
-
-**Possible future solutions:**
-- Devin team releases an Android-specific build
-- Someone compiles Devin CLI from source for Android
-- Use a Linux container on Android (UserLAnd, Proot)
-
-## Alternatives
-
-While waiting for Android support, you can:
-- Use Tertic for local development with standard tools
-- Access cloud-based Devin from your phone's browser
-- Use other AI coding assistants that support Android
+- Use Wi-Fi instead of mobile data
+- Close other apps while using Devin
+- Keep your phone charging for long sessions
+- First setup takes ~10-15 minutes (Ubuntu download)
 
 Check `docs/` for more details.
