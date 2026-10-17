@@ -53,12 +53,9 @@ else
     proot-distro install ubuntu 2>/dev/null || true
     echo "Ubuntu setup complete."
 
-    echo -e "${GREEN}[*] Fixing DNS in Ubuntu...${NC}"
-    # Fix DNS resolution in Ubuntu container
-    proot-distro login ubuntu -- bash -c "echo 'nameserver 8.8.8.8' > /etc/resolv.conf && echo 'nameserver 8.8.4.4' >> /etc/resolv.conf"
-
     echo -e "${GREEN}[*] Installing curl and Devin CLI in Ubuntu...${NC}"
-    proot-distro login ubuntu -- bash -c "apt update && apt install -y curl && curl -fsSL https://cli.devin.ai/install.sh | bash"
+    # Use --bind option to share Termux DNS with Ubuntu
+    proot-distro login ubuntu --bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf -- bash -c "apt update && apt install -y curl && curl -fsSL https://cli.devin.ai/install.sh | bash"
 
     echo -e "${GREEN}[*] Creating shortcut to run Devin...${NC}"
     # Create a wrapper script to easily run Devin from Ubuntu
