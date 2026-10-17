@@ -14,6 +14,8 @@ echo ""
 echo "This will install Ubuntu inside Termux using proot-distro,"
 echo "then install Devin CLI in that Ubuntu environment."
 echo ""
+echo "Note: Ubuntu is ~500MB and takes 10-15 minutes to download."
+echo ""
 
 # Check if running in Termux
 if [ ! -d "/data/data/com.termux" ]; then
@@ -28,14 +30,18 @@ echo -e "${GREEN}[2/5] Installing Ubuntu in proot-distro...${NC}"
 # Install Ubuntu (this will take a while)
 proot-distro install ubuntu
 
-echo -e "${GREEN}[3/5] Installing curl in Ubuntu...${NC}"
+echo -e "${GREEN}[3/5] Fixing DNS in Ubuntu...${NC}"
+# Fix DNS resolution in Ubuntu container
+proot-distro login ubuntu -- bash -c "echo 'nameserver 8.8.8.8' > /etc/resolv.conf && echo 'nameserver 8.8.4.4' >> /etc/resolv.conf"
+
+echo -e "${GREEN}[4/5] Installing curl in Ubuntu...${NC}"
 proot-distro login ubuntu -- bash -c "apt update && apt install -y curl"
 
-echo -e "${GREEN}[4/5] Installing Devin CLI in Ubuntu...${NC}"
+echo -e "${GREEN}[5/5] Installing Devin CLI in Ubuntu...${NC}"
 # Run the official Devin installer inside Ubuntu
 proot-distro login ubuntu -- bash -c "curl -fsSL https://cli.devin.ai/install.sh | bash"
 
-echo -e "${GREEN}[5/5] Creating shortcut to run Devin...${NC}"
+echo -e "${GREEN}[6/6] Creating shortcut to run Devin...${NC}"
 # Create a wrapper script to easily run Devin from Ubuntu
 cat > ~/devin << 'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
