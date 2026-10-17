@@ -23,21 +23,26 @@ if [ ! -d "/data/data/com.termux" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[1/5] Installing proot-distro...${NC}"
+echo -e "${GREEN}[1/6] Installing proot-distro...${NC}"
 pkg install -y proot-distro
 
-echo -e "${GREEN}[2/5] Installing Ubuntu in proot-distro...${NC}"
-# Install Ubuntu (this will take a while)
-proot-distro install ubuntu
+echo -e "${GREEN}[2/6] Installing Ubuntu in proot-distro...${NC}"
+# Check if Ubuntu is already installed
+if proot-distro list | grep -q "ubuntu"; then
+    echo "Ubuntu already installed, skipping..."
+else
+    # Install Ubuntu (this will take a while)
+    proot-distro install ubuntu
+fi
 
-echo -e "${GREEN}[3/5] Fixing DNS in Ubuntu...${NC}"
+echo -e "${GREEN}[3/6] Fixing DNS in Ubuntu...${NC}"
 # Fix DNS resolution in Ubuntu container
 proot-distro login ubuntu -- bash -c "echo 'nameserver 8.8.8.8' > /etc/resolv.conf && echo 'nameserver 8.8.4.4' >> /etc/resolv.conf"
 
-echo -e "${GREEN}[4/5] Installing curl in Ubuntu...${NC}"
+echo -e "${GREEN}[4/6] Installing curl in Ubuntu...${NC}"
 proot-distro login ubuntu -- bash -c "apt update && apt install -y curl"
 
-echo -e "${GREEN}[5/5] Installing Devin CLI in Ubuntu...${NC}"
+echo -e "${GREEN}[5/6] Installing Devin CLI in Ubuntu...${NC}"
 # Run the official Devin installer inside Ubuntu
 proot-distro login ubuntu -- bash -c "curl -fsSL https://cli.devin.ai/install.sh | bash"
 
