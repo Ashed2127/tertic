@@ -32,16 +32,24 @@ if [ ! -f "$INSTALL_SCRIPT" ]; then
 fi
 
 echo -e "${GREEN}[3/4] Patching installer for Android...${NC}"
-# Patch the installer to recognize Android as Linux
-# Use a different delimiter for sed to avoid escaping issues
-sed -i 's|os=$(uname -s)|os=$(uname -s | sed "s/Android/Linux/")|' "$INSTALL_SCRIPT"
+# Create a wrapper that runs uname with a fake output
+cat > "$HOME/uname-wrapper.sh" << 'EOF'
+#!/bin/bash
+if [ "$1" = "-s" ]; then
+    echo "Linux"
+else
+    /usr/bin/uname "$@"
+fi
+EOF
+chmod +x "$HOME/uname-wrapper.sh"
 
-echo -e "${GREEN}[4/4] Running patched installer...${NC}"
-# Run the patched installer
-bash "$INSTALL_SCRIPT"
+echo -e "${GREEN}[4/4] Running installer with uname wrapper...${NC}"
+# Run the installer with our custom uname in PATH
+PATH="$HOME:$PATH" bash "$INSTALL_SCRIPT"
 
 # Clean up
 rm -f "$INSTALL_SCRIPT"
+rm -f "$HOME/uname-wrapper.sh"
 
 echo ""
 echo -e "${GREEN}=========================================="
