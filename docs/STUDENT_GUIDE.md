@@ -110,11 +110,14 @@ python ~/tertic/examples/simple_agent.py
 ```
 Select option 2 for the local agent.
 
-### Try with OpenAI (Optional)
+### Try with OpenAI (Optional - Advanced)
 
-If you have an OpenAI API key:
+**Note**: OpenAI requires Rust which may not work on all Android devices. Try at your own risk.
 
 ```bash
+# Install OpenAI (may fail on some devices)
+pip install openai
+
 # Set your API key
 export OPENAI_API_KEY='your-api-key-here'
 

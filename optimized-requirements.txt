@@ -11,9 +11,7 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 prompt-toolkit>=3.0.0
 
-# AI Agent frameworks (choose what you need)
-# OpenAI
-openai>=1.0.0
-
-# Anthropic
-anthropic>=0.18.0
+# Optional: AI Agent frameworks (install separately if needed)
+# OpenAI (may require Rust): pip install openai
+# Anthropic (may require Rust): pip install anthropic
+# LangChain: pip install langchain langchain-openai

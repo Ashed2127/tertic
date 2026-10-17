@@ -41,7 +41,6 @@ echo -e "${GREEN}[6/7] Installing optimized AI agent dependencies...${NC}"
 pip install --upgrade pip
 pip install aiohttp aiosqlite pyyaml python-dotenv
 pip install rich prompt-toolkit
-pip install openai anthropic
 
 echo -e "${GREEN}[7/7] Applying mobile optimizations...${NC}"
 # Create optimized config
@@ -68,6 +67,10 @@ echo "1. Restart Termux"
 echo "2. Activate environment: source ~/tertic-env/bin/activate"
 echo "3. Check installation: python --version"
 echo ""
-echo -e "${YELLOW}Run example agent:${NC}"
+echo -e "${YELLOW}Run example agent (no API key needed):${NC}"
 echo "  python ~/tertic/examples/simple_agent.py"
+echo ""
+echo -e "${YELLOW}To use OpenAI/Anthropic (optional):${NC}"
+echo "  pip install openai anthropic"
+echo "  export OPENAI_API_KEY='your-key'"
 echo ""
