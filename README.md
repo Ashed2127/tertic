@@ -2,10 +2,6 @@
 
 Run AI agents on your Android phone - no laptop needed!
 
-## What is it?
-
-Tertic is an optimized Termux setup that lets you run AI agents directly on Android devices.
-
 ## How to use
 
 1. **Download Termux**: https://github.com/termux/termux-app/releases (get the `apt-android-7` APK for Android 7+)
