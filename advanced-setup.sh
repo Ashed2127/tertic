@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# Advanced setup for Tertic
-# Installs additional AI agent frameworks and tools
+# Advanced setup for Tertic with Devin CLI
+# Installs additional development tools for better coding experience
 
 set -e
 
@@ -9,58 +9,64 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}Tertic Advanced Setup${NC}"
+echo -e "${GREEN}Tertic Advanced Setup for Devin CLI${NC}"
 echo ""
 
-# Check if basic setup is done
-if [ ! -d "$HOME/tertic-env" ]; then
-    echo -e "${YELLOW}Basic environment not found. Run setup.sh first.${NC}"
-    exit 1
-fi
+echo -e "${GREEN}Installing additional development tools...${NC}"
 
-source ~/tertic-env/bin/activate
+# Install Python tools
+echo "Installing Python tools..."
+pkg install -y python-pip
 
-echo -e "${GREEN}Installing additional packages...${NC}"
+# Install Node.js for web development
+echo "Installing Node.js..."
+pkg install -y nodejs
 
-# Install LangChain (full)
-echo "Installing LangChain..."
-pip install langchain langchain-community
-
-# Install Anthropic
-echo "Installing Anthropic SDK..."
-pip install anthropic
-
-# Install additional tools
-echo "Installing additional tools..."
-pip install httpx websockets
-
-# Install debugging tools
-echo "Installing debugging tools..."
-pip install ipdb
-
-echo -e "${GREEN}Installing system tools...${NC}"
-pkg install -y tmux ripgrep fzf
+# Install useful CLI tools
+echo "Installing CLI tools..."
+pkg install -y tmux ripgrep fzf neovim htop
 
 echo -e "${GREEN}Configuring tmux...${NC}"
 cat > ~/.tmux.conf << 'EOF'
-# Tertic tmux configuration
+# Tertic tmux configuration for Devin CLI
 set -g default-terminal "screen-256color"
 set -g history-limit 10000
 set -g mouse on
 set -g status-bg black
 set -g status-fg green
+set -g status-left "Tertic > "
+set -g status-right "%H:%M "
 EOF
+
+echo -e "${GREEN}Installing common Python packages...${NC}"
+pip install --upgrade pip
+pip install black pylint mypy requests
+
+echo -e "${GREEN}Installing common Node.js packages...${NC}"
+npm install -g prettier eslint typescript
 
 echo ""
 echo -e "${GREEN}Advanced setup complete!${NC}"
 echo ""
 echo -e "${YELLOW}New tools available:${NC}"
-echo "  tmux      - Terminal multiplexer (tmux new -s session)"
-echo "  rg        - Fast search (ripgrep)"
-echo "  fzf       - Fuzzy finder"
+echo "  tmux      - Terminal multiplexer (tmux new -s devin)"
+echo "  rg        - Fast code search (ripgrep)"
+echo "  fzf       - Fuzzy file finder"
+echo "  nvim      - Neovim editor"
+echo "  htop      - System monitor"
 echo ""
-echo -e "${YELLOW}New Python packages:${NC}"
-echo "  langchain - Full LangChain framework"
-echo "  anthropic - Claude API support"
-echo "  ipdb      - Python debugger"
+echo -e "${YELLOW}New Python tools:${NC}"
+echo "  black     - Code formatter"
+echo "  pylint    - Code linter"
+echo "  mypy      - Type checker"
+echo ""
+echo -e "${YELLOW}New Node.js tools:${NC}"
+echo "  prettier  - Code formatter"
+echo "  eslint    - JavaScript linter"
+echo "  typescript - TypeScript compiler"
+echo ""
+echo -e "${YELLOW}Usage with Devin CLI:${NC}"
+echo "  tmux new -s devin    # Start tmux session"
+echo "  Ctrl+B then d        # Detach from tmux"
+echo "  tmux attach -t devin # Reattach to session"
 echo ""

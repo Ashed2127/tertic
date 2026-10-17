@@ -3,7 +3,7 @@
 set -e
 
 echo "=========================================="
-echo "   Tertic - Termux AI Agent Optimizer   "
+echo "   Tertic - Optimized for Devin CLI on Android"
 echo "=========================================="
 echo ""
 
@@ -19,37 +19,33 @@ if [ ! -d "/data/data/com.termux" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[1/7] Updating Termux packages...${NC}"
+echo -e "${GREEN}[1/5] Updating Termux packages...${NC}"
 pkg update -y
 pkg upgrade -y
 
-echo -e "${GREEN}[2/7] Installing core dependencies...${NC}"
-pkg install -y python git curl wget
+echo -e "${GREEN}[2/5] Installing core dependencies for Devin CLI...${NC}"
+pkg install -y git curl tar python nodejs
 
-echo -e "${GREEN}[3/7] Installing Python development tools...${NC}"
-pkg install -y python-pip
-
-echo -e "${GREEN}[4/7] Configuring Termux storage access...${NC}"
+echo -e "${GREEN}[3/5] Configuring Termux storage access...${NC}"
 termux-setup-storage
 
-echo -e "${GREEN}[5/7] Setting up Python environment...${NC}"
-mkdir -p ~/tertic-env
-python -m venv ~/tertic-env
-source ~/tertic-env/bin/activate
+echo -e "${GREEN}[4/5] Setting up development environment...${NC}"
+# Create bin directory
+mkdir -p ~/.local/bin
 
-echo -e "${GREEN}[6/7] Installing optimized AI agent dependencies...${NC}"
-pip install --upgrade pip
-pip install aiohttp aiosqlite pyyaml python-dotenv
-pip install rich prompt-toolkit
+# Add to PATH
+if ! grep -q "~/.local/bin" ~/.bashrc; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+fi
 
-echo -e "${GREEN}[7/7] Applying mobile optimizations...${NC}"
-# Create optimized config
+echo -e "${GREEN}[5/5] Applying mobile optimizations...${NC}"
+# Create optimized config for Devin CLI
 cat > ~/.tertic-config << 'EOF'
-# Tertic Configuration
+# Tertic Configuration for Devin CLI
 export PYTHONUNBUFFERED=1
 export PYTHONDONTWRITEBYTECODE=1
-export OMP_NUM_THREADS=4
-export MALLOC_TRIM_THRESHOLD_=65536
+export EDITOR=nano
+export PAGER=less
 EOF
 
 # Add to bashrc
@@ -59,18 +55,16 @@ fi
 
 echo ""
 echo -e "${GREEN}=========================================="
-echo -e "   Installation Complete! 🎉"
+echo -e "   Tertic Setup Complete! 🎉"
 echo -e "==========================================${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Restart Termux"
-echo "2. Activate environment: source ~/tertic-env/bin/activate"
-echo "3. Check installation: python --version"
+echo "2. Install Devin CLI: bash ~/tertic/install-devin.sh"
+echo "3. Login to Devin: devin auth login"
+echo "4. Run Devin in a project: cd your-project && devin"
 echo ""
-echo -e "${YELLOW}Run example agent (no API key needed):${NC}"
-echo "  python ~/tertic/examples/simple_agent.py"
-echo ""
-echo -e "${YELLOW}To use OpenAI/Anthropic (optional):${NC}"
-echo "  pip install openai anthropic"
-echo "  export OPENAI_API_KEY='your-key'"
+echo -e "${YELLOW}Optional: Install Node.js/Python tools:${NC}"
+echo "  pkg install nodejs python"
+echo "  npm install -g typescript prettier eslint"
 echo ""

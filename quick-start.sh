@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# Quick-start script for Tertic
+# Quick-start script for Tertic with Devin CLI
 # Run this after setup.sh to get started quickly
 
 set -e
@@ -9,31 +9,32 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}Tertic Quick Start${NC}"
+echo -e "${GREEN}Tertic Quick Start for Devin CLI${NC}"
 echo ""
-
-# Activate environment
-if [ -d "$HOME/tertic-env" ]; then
-    echo -e "${GREEN}Activating Tertic environment...${NC}"
-    source ~/tertic-env/bin/activate
-else
-    echo -e "${YELLOW}Environment not found. Run setup.sh first.${NC}"
-    exit 1
-fi
 
 # Load optimizations
 if [ -f "$HOME/.tertic-config" ]; then
     source ~/.tertic-config
 fi
 
+# Add to PATH
+export PATH="$HOME/.local/bin:$PATH"
+
 echo -e "${GREEN}Environment ready!${NC}"
 echo ""
-echo -e "${YELLOW}Available commands:${NC}"
-echo "  python ~/tertic/examples/simple_agent.py  - Run example agent"
-echo "  python --version                           - Check Python version"
-echo "  pip list                                  - List installed packages"
+echo -e "${YELLOW}Check Devin CLI:${NC}"
+if command -v devin &> /dev/null; then
+    echo "  devin --version"
+    devin --version
+else
+    echo "  Devin CLI not installed. Run: bash ~/tertic/install-devin.sh"
+fi
 echo ""
-echo -e "${YELLOW}To set up API keys:${NC}"
-echo "  export OPENAI_API_KEY='your-key'"
-echo "  export ANTHROPIC_API_KEY='your-key'"
+echo -e "${YELLOW}Available commands:${NC}"
+echo "  devin                  - Start Devin CLI in current directory"
+echo "  devin auth login       - Login to Devin"
+echo "  devin --help           - Show all commands"
+echo ""
+echo -e "${YELLOW}Create test project:${NC}"
+echo "  python ~/tertic/examples/devin_workflow.py"
 echo ""

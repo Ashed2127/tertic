@@ -1,6 +1,6 @@
 # Tertic
 
-Run AI agents on your Android phone - no laptop needed!
+Run Devin AI CLI on your Android phone - no laptop needed!
 
 ## How to use
 
@@ -9,16 +9,21 @@ Run AI agents on your Android phone - no laptop needed!
 2. **In Termux, run**:
    ```bash
    pkg update && pkg upgrade
-   pkg install git
+   pkg install git curl
    git clone https://github.com/Ashed2127/tertic.git
    cd tertic
    bash setup.sh
    ```
 
-3. **Run an agent**:
+3. **Install Devin CLI**:
    ```bash
-   source ~/tertic-env/bin/activate
-   python ~/tertic/examples/simple_agent.py
+   bash install-devin.sh
+   ```
+
+4. **Run Devin**:
+   ```bash
+   cd your-project
+   devin
    ```
 
 That's it! Check `docs/` for more details.

@@ -1,9 +1,7 @@
-# Tertic - Optimized AI Agent Dependencies for Android/Termux
-# These are lightweight versions optimized for mobile ARM processors
+# Tertic - Optimized for Devin CLI on Android/Termux
+# These are lightweight development tools optimized for mobile ARM processors
 
-# Core dependencies (minimal, fast)
-aiohttp>=3.9.0
-aiosqlite>=0.20.0
+# Core Python utilities
 pyyaml>=6.0
 python-dotenv>=1.0.0
 
@@ -11,7 +9,8 @@ python-dotenv>=1.0.0
 rich>=13.0.0
 prompt-toolkit>=3.0.0
 
-# Optional: AI Agent frameworks (install separately if needed)
-# OpenAI (may require Rust): pip install openai
-# Anthropic (may require Rust): pip install anthropic
-# LangChain: pip install langchain langchain-openai
+# Optional: Install as needed for your projects
+# aiohttp>=3.9.0          # For async HTTP
+# aiosqlite>=0.20.0       # For async SQLite
+# requests>=2.0.0         # For HTTP requests
+
