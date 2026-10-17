@@ -17,15 +17,3 @@ openai>=1.0.0
 
 # Anthropic
 anthropic>=0.18.0
-
-# LangChain (core only - lightweight)
-langchain-core>=0.1.0
-langchain-openai>=0.0.5
-
-# Optional: Vector search (heavier - install separately if needed)
-# sentence-transformers
-# faiss-cpu
-
-# Optional: Advanced features (install separately if needed)
-# langchain>=0.1.0
-# textual>=0.50.0

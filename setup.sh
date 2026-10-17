@@ -19,36 +19,31 @@ if [ ! -d "/data/data/com.termux" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[1/8] Updating Termux packages...${NC}"
+echo -e "${GREEN}[1/7] Updating Termux packages...${NC}"
 pkg update -y
 pkg upgrade -y
 
-echo -e "${GREEN}[2/8] Installing core dependencies...${NC}"
+echo -e "${GREEN}[2/7] Installing core dependencies...${NC}"
 pkg install -y python git curl wget
 
-echo -e "${GREEN}[3/8] Installing Python development tools...${NC}"
+echo -e "${GREEN}[3/7] Installing Python development tools...${NC}"
 pkg install -y python-pip
 
-echo -e "${GREEN}[4/8] Installing UV (fast Python package manager)...${NC}"
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
-echo -e "${GREEN}[5/8] Configuring Termux storage access...${NC}"
+echo -e "${GREEN}[4/7] Configuring Termux storage access...${NC}"
 termux-setup-storage
 
-echo -e "${GREEN}[6/8] Setting up Python environment...${NC}"
+echo -e "${GREEN}[5/7] Setting up Python environment...${NC}"
 mkdir -p ~/tertic-env
-uv venv ~/tertic-env
+python -m venv ~/tertic-env
 source ~/tertic-env/bin/activate
 
-echo -e "${GREEN}[7/8] Installing optimized AI agent dependencies...${NC}"
-uv pip install --upgrade pip
-uv pip install aiohttp aiosqlite pyyaml python-dotenv
-uv pip install rich textual prompt-toolkit
-uv pip install openai anthropic
-uv pip install langchain langchain-openai
+echo -e "${GREEN}[6/7] Installing optimized AI agent dependencies...${NC}"
+pip install --upgrade pip
+pip install aiohttp aiosqlite pyyaml python-dotenv
+pip install rich prompt-toolkit
+pip install openai anthropic
 
-echo -e "${GREEN}[8/8] Applying mobile optimizations...${NC}"
+echo -e "${GREEN}[7/7] Applying mobile optimizations...${NC}"
 # Create optimized config
 cat > ~/.tertic-config << 'EOF'
 # Tertic Configuration

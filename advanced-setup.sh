@@ -24,19 +24,19 @@ echo -e "${GREEN}Installing additional packages...${NC}"
 
 # Install LangChain (full)
 echo "Installing LangChain..."
-uv pip install langchain langchain-community
+pip install langchain langchain-community
 
 # Install Anthropic
 echo "Installing Anthropic SDK..."
-uv pip install anthropic
+pip install anthropic
 
 # Install additional tools
 echo "Installing additional tools..."
-uv pip install httpx websockets
+pip install httpx websockets
 
 # Install debugging tools
 echo "Installing debugging tools..."
-uv pip install ipdb
+pip install ipdb
 
 echo -e "${GREEN}Installing system tools...${NC}"
 pkg install -y tmux ripgrep fzf

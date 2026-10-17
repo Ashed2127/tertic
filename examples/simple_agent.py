@@ -17,7 +17,7 @@ def simple_openai_agent():
     try:
         from openai import OpenAI
     except ImportError:
-        console.print("[red]OpenAI library not installed. Run: uv pip install openai[/red]")
+        console.print("[red]OpenAI library not installed. Run: pip install openai[/red]")
         return
 
     # Check for API key

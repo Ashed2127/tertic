@@ -17,7 +17,7 @@ def langchain_agent():
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
     except ImportError:
-        console.print("[red]LangChain not installed. Run: uv pip install langchain langchain-openai[/red]")
+        console.print("[red]LangChain not installed. Run: pip install langchain langchain-openai[/red]")
         return
 
     api_key = os.getenv("OPENAI_API_KEY")
