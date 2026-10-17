@@ -19,47 +19,46 @@ if [ ! -d "/data/data/com.termux" ]; then
 fi
 
 echo -e "${GREEN}[1/4] Installing dependencies...${NC}"
-pkg install -y curl tar
+pkg install -y curl tar python3
 
-echo -e "${GREEN}[2/4] Downloading Devin CLI for ARM64...${NC}"
-# Devin CLI ARM64 Linux binary for Android
-DEVIN_VERSION="latest"
-DOWNLOAD_URL="https://static.devin.ai/cli/aarch64-unknown-linux/devin"
+echo -e "${GREEN}[2/4] Downloading Devin CLI official installer...${NC}"
+# Download the official install script
+INSTALL_SCRIPT="/tmp/devin-install.sh"
+curl -fsSL https://cli.devin.ai/install.sh -o "$INSTALL_SCRIPT"
 
-# Create bin directory
-mkdir -p ~/.local/bin
-
-# Download binary
-echo "Downloading from: $DOWNLOAD_URL"
-curl -fsSL "$DOWNLOAD_URL" -o ~/.local/bin/devin
-
-if [ ! -f ~/.local/bin/devin ]; then
-    echo -e "${RED}Error: Failed to download Devin CLI${NC}"
+if [ ! -f "$INSTALL_SCRIPT" ]; then
+    echo -e "${RED}Error: Failed to download install script${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}[3/4] Making binary executable...${NC}"
-chmod +x ~/.local/bin/devin
+echo -e "${GREEN}[3/4] Patching installer for Android...${NC}"
+# Patch the installer to recognize Android as Linux
+# Use Python to do the replacement cleanly
+python3 << 'PYTHON_SCRIPT'
+with open('/tmp/devin-install.sh', 'r') as f:
+    content = f.read()
+# Replace Android with Linux in the detect_target function
+content = content.replace('os=$(uname -s)', 'os=$(uname -s | sed "s/Android/Linux/")')
+with open('/tmp/devin-install.sh', 'w') as f:
+    f.write(content)
+PYTHON_SCRIPT
 
-echo -e "${GREEN}[4/4] Adding to PATH...${NC}"
-# Add to PATH if not already there
-if ! grep -q "~/.local/bin" ~/.bashrc; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-fi
+echo -e "${GREEN}[4/4] Running patched installer...${NC}"
+# Run the patched installer
+bash "$INSTALL_SCRIPT"
 
-# Export for current session
-export PATH="$HOME/.local/bin:$PATH"
+# Clean up
+rm -f "$INSTALL_SCRIPT"
 
 echo ""
 echo -e "${GREEN}=========================================="
-echo -e "   Devin CLI Installed! 🎉"
+echo -e "   Devin CLI Installation Complete! 🎉"
 echo -e "==========================================${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
-echo "1. Restart Termux or run: export PATH=\"\$HOME/.local/bin:\$PATH\""
-echo "2. Login to Devin: devin auth login"
-echo "3. Run Devin in a project: cd your-project && devin"
+echo "1. Restart Termux"
+echo "2. Verify installation: devin --version"
+echo "3. Login to Devin: devin auth login"
+echo "4. Run Devin in a project: cd your-project && devin"
 echo ""
-echo -e "${YELLOW}Verify installation:${NC}"
-echo "  devin --version"
-echo ""
+
