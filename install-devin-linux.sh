@@ -27,9 +27,12 @@ echo -e "${GREEN}[1/6] Installing proot-distro...${NC}"
 pkg install -y proot-distro
 
 echo -e "${GREEN}[2/6] Installing Ubuntu in proot-distro...${NC}"
-# Try to install Ubuntu, continue regardless of result
-proot-distro install ubuntu > /dev/null 2>&1 || true
-echo "Ubuntu check complete."
+# Check if Ubuntu container already exists
+if proot-distro list | grep -q "ubuntu"; then
+    echo -e "${YELLOW}Ubuntu container already exists, skipping installation.${NC}"
+else
+    proot-distro install ubuntu
+fi
 
 echo -e "${GREEN}[3/6] Fixing DNS in Ubuntu...${NC}"
 # Fix DNS resolution in Ubuntu container
