@@ -27,8 +27,8 @@ echo -e "${GREEN}[1/6] Installing proot-distro...${NC}"
 pkg install -y proot-distro
 
 echo -e "${GREEN}[2/6] Installing Ubuntu in proot-distro...${NC}"
-# Check if Ubuntu is already installed
-if proot-distro list | grep -q "ubuntu"; then
+# Check if Ubuntu is already installed by checking if the directory exists
+if [ -d "$PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
     echo "Ubuntu already installed, skipping..."
 else
     # Install Ubuntu (this will take a while)
