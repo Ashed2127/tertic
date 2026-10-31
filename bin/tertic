@@ -163,11 +163,16 @@ EOF
     if [ "$DEVICE_TIER" = "low" ]; then
         SWAP_FILE="$HOME/.tertic_swap"
         if [ ! -f "$SWAP_FILE" ]; then
-            echo -e "${YELLOW}Low memory detected (<4GB). Creating 1GB swap space...${NC}"
+            echo -e "${YELLOW}Low memory detected (<4GB). Allocating 1GB swap space...${NC}"
             dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 2>/dev/null || true
             mkswap "$SWAP_FILE" 2>/dev/null || true
-            swapon "$SWAP_FILE" 2>/dev/null || true
-            echo -e "${GREEN}✓ Swap space active${NC}"
+            # In Android/unrooted Termux, swapon syscall often returns signal 31 (unsupported/blocked by SELinux)
+            if swapon "$SWAP_FILE" 2>/dev/null; then
+                echo -e "${GREEN}✓ Swap space active${NC}"
+            else
+                rm -f "$SWAP_FILE" 2>/dev/null || true
+                echo -e "${CYAN}• Swap syscall blocked by Android kernel policy (normal for unrooted Android). Using memory heap caps instead.${NC}"
+            fi
         fi
     fi
 

@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Tertic - Robust Devin CLI Installer for Termux / Android
-# Uses Ubuntu PRoot (glibc) as primary reliable method with direct/glibc fallback
+# Handles Android DNS restrictions, IPv4 forcing, and PRoot glibc bridge
 # ==============================================================================
 
 set -e
@@ -22,57 +22,110 @@ if [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=true
 fi
 
-# Ensure bin path
+# Ensure bin directories
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/bin"
 
-install_via_proot() {
-    echo -e "${GREEN}[*] Installing via PRoot Ubuntu (glibc compatible environment)...${NC}"
-    
-    if [ "$IS_TERMUX" = true ]; then
-        pkg update -y
-        pkg install -y proot-distro curl tmux tar
-    fi
-
-    # Install Ubuntu if not installed
-    if ! proot-distro list 2>/dev/null | grep -q "ubuntu.*installed"; then
-        echo -e "${YELLOW}Setting up Ubuntu container (~300MB)...${NC}"
-        proot-distro install ubuntu
-    else
-        echo -e "${GREEN}✓ Ubuntu container already present.${NC}"
-    fi
-
-    # Fix DNS inside Ubuntu container if Termux resolv.conf exists
-    RESOLV_BIND=""
-    if [ -f "/data/data/com.termux/files/usr/etc/resolv.conf" ]; then
-        RESOLV_BIND="--bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf"
-    fi
-
-    echo -e "${GREEN}[*] Provisioning Ubuntu and installing Devin CLI...${NC}"
-    proot-distro login ubuntu $RESOLV_BIND -- bash -c '
-        set -e
-        apt-get update -y
-        apt-get install -y --no-install-recommends curl ca-certificates git python3 nodejs
-        echo "Running official Devin installer inside Ubuntu..."
-        curl -fsSL https://cli.devin.ai/install.sh | bash
-    '
-
-    echo -e "${GREEN}[*] Creating seamless Termux wrapper for 'devin'...${NC}"
-
-    # Wrapper script that maps working directory & home
-    cat > "$HOME/.local/bin/devin" << 'EOF'
-#!/usr/bin/env bash
-CURRENT_DIR="$(pwd)"
-RESOLV_BIND=""
-if [ -f "/data/data/com.termux/files/usr/etc/resolv.conf" ]; then
-    RESOLV_BIND="--bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf"
+if [ "$IS_TERMUX" = true ]; then
+    echo -e "${GREEN}[1/5] Checking Termux base dependencies...${NC}"
+    pkg update -y || true
+    pkg install -y proot-distro curl tar tmux jq
 fi
+
+# 1. Install Ubuntu if not present
+echo -e "\n${GREEN}[2/5] Ensuring Ubuntu PRoot container is installed...${NC}"
+if ! proot-distro list 2>/dev/null | grep -q "ubuntu.*installed"; then
+    echo "Installing Ubuntu container (~300MB)..."
+    proot-distro install ubuntu
+else
+    echo "✓ Ubuntu container is installed."
+fi
+
+# 2. Fix Ubuntu DNS, IPv4 forcing, and resolv.conf
+echo -e "\n${GREEN}[3/5] Fixing DNS resolution and forcing IPv4 for apt...${NC}"
+proot-distro login ubuntu -- bash -c '
+    # Remove broken symlinks to systemd-resolved (127.0.0.53)
+    rm -f /etc/resolv.conf
+    printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 8.8.4.4\n" > /etc/resolv.conf
+    
+    # Force apt to use IPv4 to avoid hanging on "Connecting to ports.ubuntu.com"
+    mkdir -p /etc/apt/apt.conf.d
+    echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4
+    
+    # Ensure /etc/resolv.conf persists on bash startup
+    if ! grep -q "nameserver 1.1.1.1" /root/.bashrc 2>/dev/null; then
+        echo "printf \"nameserver 1.1.1.1\nnameserver 8.8.8.8\n\" > /etc/resolv.conf 2>/dev/null || true" >> /root/.bashrc
+    fi
+'
+
+# 3. Test Network inside Ubuntu & Install Tools
+echo -e "\n${GREEN}[4/5] Testing network and installing base tools in Ubuntu...${NC}"
+NETWORK_OK=false
+if proot-distro login ubuntu -- bash -c "apt-get update -o Acquire::ForceIPv4=true -y && apt-get install -y --no-install-recommends curl ca-certificates tar"; then
+    NETWORK_OK=true
+    echo -e "${GREEN}✓ Ubuntu network and APT working successfully!${NC}"
+else
+    echo -e "${YELLOW}Warning: Direct APT update encountered issues. Trying alternative mirror...${NC}"
+    proot-distro login ubuntu -- bash -c '
+        # Fallback to mirror if default ports.ubuntu.com stalls
+        sed -i "s|ports.ubuntu.com/ubuntu-ports|mirror.ox.ac.uk/sites/ports.ubuntu.com|g" /etc/apt/sources.list 2>/dev/null || true
+        apt-get update -o Acquire::ForceIPv4=true -y || true
+        apt-get install -y --no-install-recommends curl ca-certificates tar || true
+    '
+fi
+
+# 4. Install Devin CLI
+echo -e "\n${GREEN}[5/5] Installing Devin CLI binary...${NC}"
+# Method A: Try official installer inside Ubuntu
+DEVIN_INSTALLED=false
+if proot-distro login ubuntu -- bash -c "curl -fsSL https://cli.devin.ai/install.sh | bash"; then
+    DEVIN_INSTALLED=true
+else
+    echo -e "${YELLOW}Official curl-bash failed inside container. Using Termux download bridge...${NC}"
+    # Method B: Fetch manifest directly in Termux (where network works) and transfer to Ubuntu
+    MANIFEST=$(curl -sSf "https://static.devin.ai/cli/current/manifest.json" || true)
+    if [ -n "$MANIFEST" ]; then
+        DEVIN_VERSION=$(echo "$MANIFEST" | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+        ARCH=$(uname -m)
+        if [ "$ARCH" = "aarch64" ]; then
+            TAR_URL="https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-aarch64-unknown-linux.tar.gz"
+        else
+            TAR_URL="https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-x86_64-unknown-linux.tar.gz"
+        fi
+        
+        echo -e "${CYAN}Downloading Devin v${DEVIN_VERSION} ($ARCH) in Termux...${NC}"
+        curl -fsSL "$TAR_URL" -o "$HOME/devin-bundle.tar.gz"
+        
+        # Unpack inside Ubuntu
+        proot-distro login ubuntu --bind "$HOME:/root/termux-home" -- bash -c "
+            mkdir -p /root/.local/share/devin/cli/_versions/${DEVIN_VERSION}
+            tar xzf /root/termux-home/devin-bundle.tar.gz -C /root/.local/share/devin/cli/_versions/${DEVIN_VERSION}
+            rm -f /root/.local/share/devin/cli/_versions/current
+            ln -s ${DEVIN_VERSION} /root/.local/share/devin/cli/_versions/current
+            mkdir -p /root/.local/bin
+            rm -f /root/.local/bin/devin
+            ln -s /root/.local/share/devin/cli/_versions/current/bin/devin /root/.local/bin/devin
+            chmod +x /root/.local/share/devin/cli/_versions/${DEVIN_VERSION}/bin/devin
+        "
+        rm -f "$HOME/devin-bundle.tar.gz"
+        DEVIN_INSTALLED=true
+    fi
+fi
+
+# 5. Create Seamless Termux Launcher
+echo -e "\n${GREEN}[*] Generating ~/.local/bin/devin launcher...${NC}"
+cat > "$HOME/.local/bin/devin" << 'EOF'
+#!/usr/bin/env bash
+# Tertic - Transparent Devin CLI launcher running via PRoot Ubuntu
+CURRENT_DIR="$(pwd)"
+WAKE_LOCK_ACTIVE=false
 
 if command -v termux-wake-lock >/dev/null 2>&1; then
     termux-wake-lock
+    WAKE_LOCK_ACTIVE=true
 fi
 
-proot-distro login ubuntu $RESOLV_BIND \
+proot-distro login ubuntu \
     --bind "$HOME:/root/termux-home" \
     --bind "$CURRENT_DIR:/workspace" \
     -- bash -c "
@@ -80,30 +133,40 @@ proot-distro login ubuntu $RESOLV_BIND \
         export PAGER=cat
         export GIT_PAGER=cat
         cd /workspace
-        devin \"\$@\"
-    "
+        if command -v devin >/dev/null 2>&1; then
+            devin \"\$@\"
+        elif [ -f /root/.local/bin/devin ]; then
+            /root/.local/bin/devin \"\$@\"
+        elif [ -f /root/.local/share/devin/cli/_versions/current/bin/devin ]; then
+            /root/.local/share/devin/cli/_versions/current/bin/devin \"\$@\"
+        else
+            echo 'Error: Devin executable not found in Ubuntu container.'
+            exit 1
+        fi
+    " -- "$@"
+
+EXIT_STATUS=$?
+
+if [ "$WAKE_LOCK_ACTIVE" = true ] && command -v termux-wake-unlock >/dev/null 2>&1; then
+    termux-wake-unlock
+fi
+
+exit $EXIT_STATUS
 EOF
-    chmod +x "$HOME/.local/bin/devin"
-    # Also link to ~/bin/devin for fallback
-    cp "$HOME/.local/bin/devin" "$HOME/bin/devin" 2>/dev/null || true
-    chmod +x "$HOME/bin/devin" 2>/dev/null || true
 
-    echo -e "${GREEN}✓ Devin CLI successfully installed via Ubuntu PRoot!${NC}"
-}
+chmod +x "$HOME/.local/bin/devin"
+cp "$HOME/.local/bin/devin" "$HOME/bin/devin" 2>/dev/null || true
 
-# Execute installation
-install_via_proot
-
-# Ensure PATH in ~/.bashrc
+# Add to PATH in ~/.bashrc
 if ! grep -q '\$HOME/\.local/bin' "$HOME/.bashrc" 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$HOME/bin:$PATH"' >> "$HOME/.bashrc"
 fi
 
 echo -e "\n${GREEN}==========================================${NC}"
-echo -e "${GREEN}   Devin CLI Installation Complete! 🎉    ${NC}"
+echo -e "${GREEN}   Devin CLI Setup Complete! 🎉           ${NC}"
 echo -e "${GREEN}==========================================${NC}\n"
-echo -e "${YELLOW}Usage:${NC}"
-echo "  devin --version"
-echo "  devin auth login"
-echo "  tertic run devin"
+echo -e "Usage:"
+echo -e "  ${YELLOW}devin --version${NC}          # Verify version"
+echo -e "  ${YELLOW}devin auth login${NC}         # Authenticate Devin"
+echo -e "  ${YELLOW}tertic run devin${NC}         # Run in persistent background session"
 echo ""
