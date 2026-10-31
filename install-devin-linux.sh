@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Tertic - Robust Devin CLI Installer for Termux / Android
-# Handles Android DNS restrictions, IPv4 forcing, and PRoot glibc bridge
+# Uses Ubuntu PRoot (glibc) environment and creates seamless wrapper
 # ==============================================================================
 
 set -e
@@ -26,19 +26,27 @@ fi
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$HOME/bin"
 
+# Remove any old broken direct-termux devin binary so Termux doesn't execute it
+rm -f "$HOME/.local/bin/devin"
+rm -f "$HOME/bin/devin"
+rm -f "$HOME/devin"
+
 if [ "$IS_TERMUX" = true ]; then
     echo -e "${GREEN}[1/5] Checking Termux base dependencies...${NC}"
     pkg update -y || true
     pkg install -y proot-distro curl tar tmux jq
 fi
 
-# 1. Install Ubuntu if not present
-echo -e "\n${GREEN}[2/5] Ensuring Ubuntu PRoot container is installed...${NC}"
-if ! proot-distro list 2>/dev/null | grep -q "ubuntu.*installed"; then
-    echo "Installing Ubuntu container (~300MB)..."
-    proot-distro install ubuntu
+# 1. Check if Ubuntu container is installed
+echo -e "\n${GREEN}[2/5] Checking Ubuntu PRoot container...${NC}"
+PREFIX_PATH="${PREFIX:-/data/data/com.termux/files/usr}"
+UBUNTU_ROOTFS="$PREFIX_PATH/var/lib/proot-distro/installed-rootfs/ubuntu"
+
+if [ -d "$UBUNTU_ROOTFS" ]; then
+    echo -e "${GREEN}✓ Ubuntu container already installed.${NC}"
 else
-    echo "✓ Ubuntu container is installed."
+    echo "Installing Ubuntu container (~300MB)..."
+    proot-distro install ubuntu || true
 fi
 
 # 2. Fix Ubuntu DNS, IPv4 forcing, and resolv.conf
@@ -60,29 +68,20 @@ proot-distro login ubuntu -- bash -c '
 
 # 3. Test Network inside Ubuntu & Install Tools
 echo -e "\n${GREEN}[4/5] Testing network and installing base tools in Ubuntu...${NC}"
-NETWORK_OK=false
-if proot-distro login ubuntu -- bash -c "apt-get update -o Acquire::ForceIPv4=true -y && apt-get install -y --no-install-recommends curl ca-certificates tar"; then
-    NETWORK_OK=true
-    echo -e "${GREEN}✓ Ubuntu network and APT working successfully!${NC}"
-else
-    echo -e "${YELLOW}Warning: Direct APT update encountered issues. Trying alternative mirror...${NC}"
-    proot-distro login ubuntu -- bash -c '
-        # Fallback to mirror if default ports.ubuntu.com stalls
-        sed -i "s|ports.ubuntu.com/ubuntu-ports|mirror.ox.ac.uk/sites/ports.ubuntu.com|g" /etc/apt/sources.list 2>/dev/null || true
-        apt-get update -o Acquire::ForceIPv4=true -y || true
-        apt-get install -y --no-install-recommends curl ca-certificates tar || true
-    '
-fi
+proot-distro login ubuntu -- bash -c "
+    apt-get update -o Acquire::ForceIPv4=true -y || true
+    apt-get install -y --no-install-recommends curl ca-certificates tar || true
+"
 
 # 4. Install Devin CLI
 echo -e "\n${GREEN}[5/5] Installing Devin CLI binary...${NC}"
-# Method A: Try official installer inside Ubuntu
 DEVIN_INSTALLED=false
+
+# Method A: Try official installer inside Ubuntu
 if proot-distro login ubuntu -- bash -c "curl -fsSL https://cli.devin.ai/install.sh | bash"; then
     DEVIN_INSTALLED=true
 else
     echo -e "${YELLOW}Official curl-bash failed inside container. Using Termux download bridge...${NC}"
-    # Method B: Fetch manifest directly in Termux (where network works) and transfer to Ubuntu
     MANIFEST=$(curl -sSf "https://static.devin.ai/cli/current/manifest.json" || true)
     if [ -n "$MANIFEST" ]; then
         DEVIN_VERSION=$(echo "$MANIFEST" | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
@@ -112,7 +111,7 @@ else
     fi
 fi
 
-# 5. Create Seamless Termux Launcher
+# 5. Create Seamless Termux Launcher (~/.local/bin/devin)
 echo -e "\n${GREEN}[*] Generating ~/.local/bin/devin launcher...${NC}"
 cat > "$HOME/.local/bin/devin" << 'EOF'
 #!/usr/bin/env bash
@@ -157,7 +156,7 @@ EOF
 chmod +x "$HOME/.local/bin/devin"
 cp "$HOME/.local/bin/devin" "$HOME/bin/devin" 2>/dev/null || true
 
-# Add to PATH in ~/.bashrc
+# Add to PATH in ~/.bashrc with precedence for ~/.local/bin
 if ! grep -q '\$HOME/\.local/bin' "$HOME/.bashrc" 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$HOME/bin:$PATH"' >> "$HOME/.bashrc"
 fi
