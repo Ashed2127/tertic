@@ -35,28 +35,25 @@ else
 fi
 
 echo -e "${GREEN}[4/5] Setting up development environment...${NC}"
-# Create bin directory
+# Create bin directories
 mkdir -p ~/.local/bin
+mkdir -p ~/bin
 
-# Add to PATH
-if ! grep -q "~/.local/bin" ~/.bashrc; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+# Add both ~/.local/bin and ~/bin to PATH if not already present
+if ! grep -q '\$HOME/\.local/bin' ~/.bashrc 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$HOME/bin:$PATH"' >> ~/.bashrc
 fi
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 
-echo -e "${GREEN}[5/5] Applying mobile optimizations...${NC}"
-# Create optimized config
-cat > ~/.tertic-config << 'EOF'
-# Tertic Configuration
-export PYTHONUNBUFFERED=1
-export PYTHONDONTWRITEBYTECODE=1
-export EDITOR=nano
-export PAGER=less
-EOF
+echo -e "${GREEN}[5/5] Setting up Tertic CLI and system optimizations...${NC}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cp "$SCRIPT_DIR/bin/tertic" ~/.local/bin/tertic
+cp "$SCRIPT_DIR/bin/tertic" ~/bin/tertic 2>/dev/null || true
+chmod +x ~/.local/bin/tertic
+chmod +x ~/bin/tertic 2>/dev/null || true
 
-# Add to bashrc
-if ! grep -q "tertic-config" ~/.bashrc; then
-    echo "source ~/.tertic-config" >> ~/.bashrc
-fi
+# Run Tertic optimize to auto-tune based on hardware profile
+tertic optimize || bash ~/.local/bin/tertic optimize
 
 echo ""
 echo -e "${GREEN}=========================================="

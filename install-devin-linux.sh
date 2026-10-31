@@ -1,81 +1,109 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Tertic - Robust Devin CLI Installer for Termux / Android
+# Uses Ubuntu PRoot (glibc) as primary reliable method with direct/glibc fallback
+# ==============================================================================
 
 set -e
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo "=========================================="
-echo "   Installing Devin CLI on Termux"
-echo "=========================================="
-echo ""
-echo "This will try multiple installation methods."
-echo ""
+echo -e "${CYAN}==========================================${NC}"
+echo -e "${CYAN}   Installing Devin CLI on Termux (Tertic)${NC}"
+echo -e "${CYAN}==========================================${NC}\n"
 
-# Check if running in Termux
-if [ ! -d "/data/data/com.termux" ]; then
-    echo -e "${RED}Error: This script must be run in Termux${NC}"
-    exit 1
+IS_TERMUX=false
+if [ -d "/data/data/com.termux" ]; then
+    IS_TERMUX=true
 fi
 
-echo -e "${GREEN}[*] Method 1: Installing directly in Termux...${NC}"
-# Try installing directly in Termux first
-pkg install -y curl
-if curl -fsSL https://cli.devin.ai/install.sh | bash; then
-    echo -e "${GREEN}✓ Devin CLI installed successfully in Termux!${NC}"
-    cat > ~/devin << 'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-devin "$@"
-EOF
-    chmod +x ~/devin
-    USE_GLIBC_RUNNER=false
-else
-    echo -e "${YELLOW}✗ Direct installation failed, trying glibc-runner...${NC}"
+# Ensure bin path
+mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/bin"
 
-    echo -e "${GREEN}[*] Method 2: Installing via glibc-runner...${NC}"
-    if pkg install -y glibc-repo 2>/dev/null; then
-        pkg install -y glibc-runner
-        if grun -- bash -c "curl -fsSL https://cli.devin.ai/install.sh | bash"; then
-            echo -e "${GREEN}✓ Devin CLI installed via glibc-runner!${NC}"
-            cat > ~/devin << 'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
-grun -- devin "$@"
-EOF
-            chmod +x ~/devin
-            USE_GLIBC_RUNNER=true
-        else
-            echo -e "${RED}✗ glibc-runner installation failed${NC}"
-            exit 1
-        fi
-    else
-        echo -e "${RED}✗ glibc-repo not available. Please update Termux from GitHub releases.${NC}"
-        echo -e "${YELLOW}https://github.com/termux/termux-app/releases${NC}"
-        exit 1
+install_via_proot() {
+    echo -e "${GREEN}[*] Installing via PRoot Ubuntu (glibc compatible environment)...${NC}"
+    
+    if [ "$IS_TERMUX" = true ]; then
+        pkg update -y
+        pkg install -y proot-distro curl tmux tar
     fi
+
+    # Install Ubuntu if not installed
+    if ! proot-distro list 2>/dev/null | grep -q "ubuntu.*installed"; then
+        echo -e "${YELLOW}Setting up Ubuntu container (~300MB)...${NC}"
+        proot-distro install ubuntu
+    else
+        echo -e "${GREEN}✓ Ubuntu container already present.${NC}"
+    fi
+
+    # Fix DNS inside Ubuntu container if Termux resolv.conf exists
+    RESOLV_BIND=""
+    if [ -f "/data/data/com.termux/files/usr/etc/resolv.conf" ]; then
+        RESOLV_BIND="--bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf"
+    fi
+
+    echo -e "${GREEN}[*] Provisioning Ubuntu and installing Devin CLI...${NC}"
+    proot-distro login ubuntu $RESOLV_BIND -- bash -c '
+        set -e
+        apt-get update -y
+        apt-get install -y --no-install-recommends curl ca-certificates git python3 nodejs
+        echo "Running official Devin installer inside Ubuntu..."
+        curl -fsSL https://cli.devin.ai/install.sh | bash
+    '
+
+    echo -e "${GREEN}[*] Creating seamless Termux wrapper for 'devin'...${NC}"
+
+    # Wrapper script that maps working directory & home
+    cat > "$HOME/.local/bin/devin" << 'EOF'
+#!/usr/bin/env bash
+CURRENT_DIR="$(pwd)"
+RESOLV_BIND=""
+if [ -f "/data/data/com.termux/files/usr/etc/resolv.conf" ]; then
+    RESOLV_BIND="--bind /data/data/com.termux/files/usr/etc/resolv.conf:/etc/resolv.conf"
 fi
 
-# Add to PATH if not already there
-if ! grep -q "export PATH=\"\$HOME:\$PATH\"" ~/.bashrc; then
-    echo 'export PATH="$HOME:$PATH"' >> ~/.bashrc
+if command -v termux-wake-lock >/dev/null 2>&1; then
+    termux-wake-lock
 fi
 
-echo ""
-echo -e "${GREEN}=========================================="
-echo -e "   Devin CLI Installation Complete! 🎉"
-echo -e "==========================================${NC}"
-echo ""
+proot-distro login ubuntu $RESOLV_BIND \
+    --bind "$HOME:/root/termux-home" \
+    --bind "$CURRENT_DIR:/workspace" \
+    -- bash -c "
+        export PATH=\"/root/.local/bin:/root/bin:\$PATH\"
+        export PAGER=cat
+        export GIT_PAGER=cat
+        cd /workspace
+        devin \"\$@\"
+    "
+EOF
+    chmod +x "$HOME/.local/bin/devin"
+    # Also link to ~/bin/devin for fallback
+    cp "$HOME/.local/bin/devin" "$HOME/bin/devin" 2>/dev/null || true
+    chmod +x "$HOME/bin/devin" 2>/dev/null || true
+
+    echo -e "${GREEN}✓ Devin CLI successfully installed via Ubuntu PRoot!${NC}"
+}
+
+# Execute installation
+install_via_proot
+
+# Ensure PATH in ~/.bashrc
+if ! grep -q '\$HOME/\.local/bin' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+
+echo -e "\n${GREEN}==========================================${NC}"
+echo -e "${GREEN}   Devin CLI Installation Complete! 🎉    ${NC}"
+echo -e "${GREEN}==========================================${NC}\n"
 echo -e "${YELLOW}Usage:${NC}"
-echo "  devin --version           # Check version"
-echo "  devin auth login          # Login to Devin"
-echo "  devin                    # Start Devin in current directory"
-echo ""
-if [ "$USE_GLIBC_RUNNER" = true ]; then
-    echo -e "${YELLOW}Note:${NC}"
-    echo "Devin runs via glibc-runner at native speed."
-else
-    echo -e "${YELLOW}Note:${NC}"
-    echo "Devin runs directly in Termux."
-fi
+echo "  devin --version"
+echo "  devin auth login"
+echo "  tertic run devin"
 echo ""

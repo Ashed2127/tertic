@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Tertic CLI - Universal Optimization & Agent Manager for Termux / Android
+# ==============================================================================
+
+set -e
+
+# Terminal Colors
+BOLD='\033[1m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+TERTIC_DIR="$HOME/.tertic"
+TERTIC_CONFIG="$HOME/.tertic/config.env"
+TERTIC_BIN="$HOME/.local/bin"
+
+mkdir -p "$TERTIC_DIR" "$TERTIC_BIN"
+
+banner() {
+    echo -e "${CYAN}${BOLD}"
+    echo "  _____         _   _      "
+    echo " |_   _|__ _ __| |_(_) ___ "
+    echo "   | |/ _ \ '__| __| |/ __|"
+    echo "   | |  __/ |  | |_| | (__ "
+    echo "   |_|\___|_|   \__|_|\___|"
+    echo " Autonomous Agent Environment for Android"
+    echo -e "${NC}"
+}
+
+# -----------------------------------------------------------------------------
+# Detect System Profile
+# -----------------------------------------------------------------------------
+detect_system() {
+    ARCH=$(uname -m)
+    TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "4194304")
+    TOTAL_RAM_MB=$((TOTAL_RAM_KB / 1024))
+    CORES=$(nproc 2>/dev/null || echo "4")
+    
+    # Check Android release if available
+    ANDROID_VER=$(getprop ro.build.version.release 2>/dev/null || echo "Unknown")
+
+    if [ "$TOTAL_RAM_MB" -lt 4096 ]; then
+        DEVICE_TIER="low"
+        RECOMMENDED_OLD_SPACE=768
+        RECOMMENDED_MAKEFLAGS="-j2"
+    elif [ "$TOTAL_RAM_MB" -lt 8192 ]; then
+        DEVICE_TIER="mid"
+        RECOMMENDED_OLD_SPACE=1536
+        RECOMMENDED_MAKEFLAGS="-j$((CORES > 4 ? 4 : CORES))"
+    else
+        DEVICE_TIER="high"
+        RECOMMENDED_OLD_SPACE=3072
+        RECOMMENDED_MAKEFLAGS="-j$CORES"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Command: doctor
+# -----------------------------------------------------------------------------
+cmd_doctor() {
+    banner
+    detect_system
+    echo -e "${BOLD}Running Tertic System Diagnostics...${NC}\n"
+
+    echo -e "${CYAN}[Hardware & OS]${NC}"
+    echo "  • Architecture   : $ARCH"
+    echo "  • Android Version: $ANDROID_VER"
+    echo "  • CPU Cores      : $CORES"
+    echo -e "  • Total RAM      : ${TOTAL_RAM_MB} MB (Profile: ${BOLD}${DEVICE_TIER}${NC})"
+    
+    echo -e "\n${CYAN}[Process & Battery Survival]${NC}"
+    if command -v termux-wake-lock >/dev/null 2>&1; then
+        echo -e "  • termux-wake-lock : ${GREEN}Available${NC}"
+    else
+        echo -e "  • termux-wake-lock : ${YELLOW}Missing (run: pkg install termux-api)${NC}"
+    fi
+
+    if [ -f "$HOME/.termux/termux.properties" ]; then
+        echo -e "  • termux.properties: ${GREEN}Configured${NC}"
+    else
+        echo -e "  • termux.properties: ${YELLOW}Not configured (run: tertic optimize)${NC}"
+    fi
+
+    if command -v tmux >/dev/null 2>&1; then
+        echo -e "  • tmux (daemon)    : ${GREEN}Installed${NC}"
+    else
+        echo -e "  • tmux (daemon)    : ${YELLOW}Not installed (recommended for agent background runs)${NC}"
+    fi
+
+    echo -e "\n${CYAN}[Developer & Agent Tooling]${NC}"
+    for tool in git curl python node rg jq fzf proot-distro; do
+        if command -v "$tool" >/dev/null 2>&1; then
+            echo -e "  • $(printf '%-16s' "$tool"): ${GREEN}Installed${NC}"
+        else
+            echo -e "  • $(printf '%-16s' "$tool"): ${RED}Not installed${NC}"
+        fi
+    done
+
+    echo -e "\n${CYAN}[Installed Agent Environments]${NC}"
+    if command -v devin >/dev/null 2>&1; then
+        echo -e "  • Devin CLI        : ${GREEN}Available${NC}"
+    else
+        echo -e "  • Devin CLI        : ${YELLOW}Not installed${NC}"
+    fi
+
+    if command -v agy >/dev/null 2>&1; then
+        echo -e "  • Antigravity (agy): ${GREEN}Available${NC}"
+    else
+        echo -e "  • Antigravity (agy): ${YELLOW}Not installed${NC}"
+    fi
+
+    echo ""
+}
+
+# -----------------------------------------------------------------------------
+# Command: optimize
+# -----------------------------------------------------------------------------
+cmd_optimize() {
+    banner
+    detect_system
+    echo -e "${GREEN}Applying automated optimizations for ${BOLD}${DEVICE_TIER}-spec${NC} device...${NC}\n"
+
+    # 1. Update termux.properties for keyboard and wake-lock
+    mkdir -p "$HOME/.termux"
+    cat > "$HOME/.termux/termux.properties" << 'EOF'
+allow-external-apps = true
+enforce-char-class = true
+extra-keys = [[ESC, TAB, CTRL, ALT, '/', '|', HOME, UP, END, DOWN, '-', '=']]
+terminal-bell-style = none
+cursor-style = block
+wake-lock = true
+shared-termux-storage = true
+use-termux-exec = true
+EOF
+    termux-reload-settings 2>/dev/null || true
+    echo -e "${GREEN}✓ Applied mobile keyboard and terminal settings${NC}"
+
+    # 2. Write dynamic environment optimization config
+    cat > "$TERTIC_CONFIG" << EOF
+# Auto-generated by Tertic for $DEVICE_TIER tier ($TOTAL_RAM_MB MB RAM)
+export ARCH="$ARCH"
+export DEVICE_TIER="$DEVICE_TIER"
+export PYTHONUNBUFFERED=1
+export PYTHONDONTWRITEBYTECODE=1
+export NODE_OPTIONS="--max-old-space-size=$RECOMMENDED_OLD_SPACE"
+export MAKEFLAGS="$RECOMMENDED_MAKEFLAGS"
+export DEBIAN_FRONTEND=noninteractive
+export PAGER=cat
+export GIT_PAGER=cat
+EOF
+
+    # Hook into bashrc
+    if ! grep -q "source $TERTIC_CONFIG" "$HOME/.bashrc" 2>/dev/null; then
+        echo "[[ -f $TERTIC_CONFIG ]] && source $TERTIC_CONFIG" >> "$HOME/.bashrc"
+    fi
+    echo -e "${GREEN}✓ Generated performance config ($TERTIC_CONFIG)${NC}"
+
+    # 3. Create swap if low-memory device
+    if [ "$DEVICE_TIER" = "low" ]; then
+        SWAP_FILE="$HOME/.tertic_swap"
+        if [ ! -f "$SWAP_FILE" ]; then
+            echo -e "${YELLOW}Low memory detected (<4GB). Creating 1GB swap space...${NC}"
+            dd if=/dev/zero of="$SWAP_FILE" bs=1M count=1024 2>/dev/null || true
+            mkswap "$SWAP_FILE" 2>/dev/null || true
+            swapon "$SWAP_FILE" 2>/dev/null || true
+            echo -e "${GREEN}✓ Swap space active${NC}"
+        fi
+    fi
+
+    # 4. Acquire Wake Lock
+    if command -v termux-wake-lock >/dev/null 2>&1; then
+        termux-wake-lock
+        echo -e "${GREEN}✓ Wake-lock engaged (Android won't sleep CPU mid-task)${NC}"
+    fi
+
+    echo -e "\n${BOLD}${GREEN}Optimization complete! Reloading environment...${NC}\n"
+}
+
+# -----------------------------------------------------------------------------
+# Command: run (execute agents safely in tmux / background)
+# -----------------------------------------------------------------------------
+cmd_run() {
+    if [ $# -lt 1 ]; then
+        echo -e "${RED}Usage: tertic run <command> [args...]${NC}"
+        echo "Example: tertic run devin"
+        echo "Example: tertic run agy"
+        exit 1
+    fi
+
+    detect_system
+    # Ensure wake lock is on
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+    AGENT_CMD="$@"
+    SESSION_NAME="tertic-agent"
+
+    if command -v tmux >/dev/null 2>&1; then
+        echo -e "${GREEN}Starting '$AGENT_CMD' inside persistent tmux session '${SESSION_NAME}'...${NC}"
+        echo -e "${CYAN}Tip: If your app closes or phone locks, reattach anytime with: tmux attach -t ${SESSION_NAME}${NC}\n"
+        
+        # Check if session already exists
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            tmux attach-session -t "$SESSION_NAME"
+        else
+            tmux new-session -s "$SESSION_NAME" "$AGENT_CMD"
+        fi
+    else
+        echo -e "${YELLOW}tmux not found. Running directly in foreground...${NC}"
+        exec "$@"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Command: notify (Bridge agent to Android notification)
+# -----------------------------------------------------------------------------
+cmd_notify() {
+    TITLE="${1:-Tertic Agent}"
+    MESSAGE="${2:-Task finished.}"
+    if command -v termux-notification >/dev/null 2>&1; then
+        termux-notification --title "$TITLE" --content "$MESSAGE" --priority high --vibrate 500
+    fi
+    if command -v termux-vibrate >/dev/null 2>&1; then
+        termux-vibrate -d 300
+    fi
+    echo -e "${GREEN}[Alert Sent]: $TITLE - $MESSAGE${NC}"
+}
+
+# -----------------------------------------------------------------------------
+# Help
+# -----------------------------------------------------------------------------
+cmd_help() {
+    banner
+    echo -e "Usage: ${BOLD}tertic <command> [options]${NC}\n"
+    echo "Commands:"
+    echo -e "  ${BOLD}doctor${NC}       Inspect hardware, OS, and agent readiness"
+    echo -e "  ${BOLD}optimize${NC}     Auto-tune memory, CPU limits, keyboard, and background wake-lock"
+    echo -e "  ${BOLD}run <agent>${NC}  Safely launch an agent inside a persistent, crash-proof session"
+    echo -e "  ${BOLD}notify <msg>${NC} Send an Android push alert when an agent finishes its work"
+    echo -e "  ${BOLD}help${NC}         Show this help message"
+    echo ""
+}
+
+# Main Dispatcher
+case "$1" in
+    doctor)
+        cmd_doctor
+        ;;
+    optimize)
+        cmd_optimize
+        ;;
+    run)
+        shift
+        cmd_run "$@"
+        ;;
+    notify)
+        shift
+        cmd_notify "$@"
+        ;;
+    help|--help|-h|"")
+        cmd_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        cmd_help
+        exit 1
+        ;;
+esac
