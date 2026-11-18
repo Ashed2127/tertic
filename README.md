@@ -37,10 +37,10 @@ trtc
 trtc ❯ create a full-stack react + express app with sqlite
 ```
 
-### 2. Direct Task Execution
-```bash
-trtc "build an express api with tests and git commit"
-```
+### 3. Switch Models Instantly (`/model`)
+Type **`/model`** at anytime inside `trtc` to open the arrow-key model switcher:
+- Automatically detects and lists all models you've downloaded in Ollama!
+- Lets you switch between installed local models, download new ones, or pick cloud models.
 
 ---
 

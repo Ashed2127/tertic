@@ -49,6 +49,41 @@ func NewClient(baseURL, model string) *Client {
 	}
 }
 
+// GetDownloadedModels queries the local Ollama daemon for currently installed models
+func GetDownloadedModels(baseURL string) ([]string, error) {
+	if baseURL == "" {
+		baseURL = DefaultHost
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(baseURL + "/api/tags")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		Models []struct {
+			Name string `json:"name"`
+			Size int64  `json:"size"`
+		} `json:"models"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, m := range data.Models {
+		sizeMB := float64(m.Size) / (1024 * 1024)
+		if sizeMB >= 1000 {
+			names = append(names, fmt.Sprintf("%-30s (%.1f GB)", m.Name, sizeMB/1024))
+		} else {
+			names = append(names, fmt.Sprintf("%-30s (%.0f MB)", m.Name, sizeMB))
+		}
+	}
+	return names, nil
+}
+
 // IsOllamaRunning checks if the Ollama daemon is reachable
 func (c *Client) IsOllamaRunning() bool {
 	resp, err := c.HTTPClient.Get(c.BaseURL + "/api/tags")
@@ -68,7 +103,6 @@ func EnsureOllamaRunning() {
 		return
 	}
 
-	// Try starting ollama serve in background if binary exists
 	if _, err := exec.LookPath("ollama"); err == nil {
 		cmd := exec.Command("ollama", "serve")
 		_ = cmd.Start()

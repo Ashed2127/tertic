@@ -120,17 +120,14 @@ type AgentConfig struct {
 
 // Arrow Key Interactive Selector
 func selectInteractive(title string, options []string) int {
-	// Raw mode for arrow navigation
 	fd := int(os.Stdin.Fd())
 	var oldState syscall.Termios
-	// Try raw terminal if possible
 	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
 	raw := oldState
 	raw.Lflag &^= (syscall.ICANON | syscall.ECHO)
 	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&raw)), 0, 0, 0)
 
 	defer func() {
-		// Restore terminal
 		_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
 		fmt.Print("\033[?25h") // Show cursor
 	}()
@@ -150,7 +147,6 @@ func selectInteractive(title string, options []string) int {
 		}
 	}
 
-	// Initial render
 	fmt.Printf("%s%s%s\n", ColorBold, title, ColorReset)
 	for i, opt := range options {
 		if i == selected {
@@ -300,7 +296,6 @@ func resolveConfig() (*AgentConfig, error) {
 	}
 
 	if modeChoice == 0 {
-		// Cloud API Option
 		apiOptions := []string{
 			"OpenRouter (Free Cloud Key pre-configured)",
 			"Google Gemini API (Enter your own key)",
@@ -308,7 +303,6 @@ func resolveConfig() (*AgentConfig, error) {
 		apiChoice := selectInteractive("Choose Cloud Provider:", apiOptions)
 
 		if apiChoice == 0 {
-			// Pre-configured OpenRouter
 			if configFile != "" {
 				_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"openrouter\"\nexport OPENROUTER_API_KEY=\"%s\"\nexport OPENROUTER_MODEL=\"%s\"\n", getBuiltinOpenRouterKey(), openrouter.DefaultModel)), 0600)
 			}
@@ -318,7 +312,6 @@ func resolveConfig() (*AgentConfig, error) {
 				Model:    openrouter.DefaultModel,
 			}, nil
 		} else {
-			// Enter Google API Key
 			fmt.Print("\nEnter your Google Gemini API Key: ")
 			reader := bufio.NewReader(os.Stdin)
 			key, _ := reader.ReadString('\n')
@@ -347,7 +340,6 @@ func resolveConfig() (*AgentConfig, error) {
 	fmt.Printf("%s🚀 Selected Local Model:%s %s%s%s (%s)\n", ColorBold, ColorReset, ColorGreen, chosenModel.ID, ColorReset, chosenModel.Size)
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorCyan, ColorReset)
 
-	// Check if ollama is installed
 	if _, err := exec.LookPath("ollama"); err != nil {
 		fmt.Printf("%sInstalling Ollama on Termux/Linux...%s\n", ColorYellow, ColorReset)
 		installCmd := exec.Command("bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh || pkg install -y ollama || true")
@@ -356,17 +348,14 @@ func resolveConfig() (*AgentConfig, error) {
 		_ = installCmd.Run()
 	}
 
-	// Ensure daemon is started
 	ollama.EnsureOllamaRunning()
 
-	// Download model with live spinner
 	pullSpinner := NewSpinner(fmt.Sprintf("📥 Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
 	pullSpinner.Start()
 	pullCmd := exec.Command("ollama", "pull", chosenModel.ID)
 	_ = pullCmd.Run()
 	pullSpinner.Stop(fmt.Sprintf("%s✓ %s successfully downloaded and ready!%s", ColorGreen, chosenModel.ID, ColorReset))
 
-	// Save to config
 	if configFile != "" {
 		_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"ollama\"\nexport OLLAMA_MODEL=\"%s\"\nexport OLLAMA_HOST=\"%s\"\n", chosenModel.ID, ollama.DefaultHost)), 0600)
 	}
@@ -380,6 +369,94 @@ func resolveConfig() (*AgentConfig, error) {
 		Model:    chosenModel.ID,
 		Host:     ollama.DefaultHost,
 	}, nil
+}
+
+// Interactive Model Switcher (/model)
+func switchModelInteractive(cfg *AgentConfig) {
+	fmt.Println()
+	if cfg.Provider == "ollama" {
+		models, err := ollama.GetDownloadedModels(cfg.Host)
+		if err != nil || len(models) == 0 {
+			fmt.Printf("%s[Info] Could not fetch downloaded models from Ollama daemon.%s\n", ColorYellow, ColorReset)
+			fmt.Println("Available recommended models to download:")
+			var opts []string
+			for _, m := range ollama.AvailableLocalModels {
+				opts = append(opts, fmt.Sprintf("%-22s [%-6s]", m.ID, m.Size))
+			}
+			idx := selectInteractive("Choose Model to Pull & Use (Use ↑/↓ arrows & Enter):", opts)
+			chosen := ollama.AvailableLocalModels[idx].ID
+
+			spinner := NewSpinner("📥 Pulling model: " + chosen)
+			spinner.Start()
+			_ = exec.Command("ollama", "pull", chosen).Run()
+			spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
+			cfg.Model = chosen
+		} else {
+			// List installed models
+			opts := append(models, "➕ Download a new model...")
+			idx := selectInteractive("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
+
+			if idx == len(models) {
+				var newOpts []string
+				for _, m := range ollama.AvailableLocalModels {
+					newOpts = append(newOpts, fmt.Sprintf("%-22s [%-6s]", m.ID, m.Size))
+				}
+				newIdx := selectInteractive("Select Model to Download:", newOpts)
+				chosen := ollama.AvailableLocalModels[newIdx].ID
+
+				spinner := NewSpinner("📥 Pulling model: " + chosen)
+				spinner.Start()
+				_ = exec.Command("ollama", "pull", chosen).Run()
+				spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
+				cfg.Model = chosen
+			} else {
+				// Parse model name from selected string
+				parts := strings.Fields(models[idx])
+				if len(parts) > 0 {
+					cfg.Model = parts[0]
+				}
+			}
+		}
+	} else if cfg.Provider == "openrouter" {
+		cloudModels := []string{
+			"cohere/north-mini-code:free (Free, Fast, Tool-Enabled)",
+			"meta-llama/llama-3.3-70b-instruct:free",
+			"qwen/qwen-2.5-coder-32b-instruct:free",
+			"deepseek/deepseek-r1:free",
+		}
+		idx := selectInteractive("Select OpenRouter Model (Use ↑/↓ arrows & Enter):", cloudModels)
+		parts := strings.Fields(cloudModels[idx])
+		if len(parts) > 0 {
+			cfg.Model = parts[0]
+		}
+	} else {
+		geminiModels := []string{
+			"gemini-3.1-flash-lite (Recommended, Free tier)",
+			"gemini-3-flash-preview",
+		}
+		idx := selectInteractive("Select Gemini Model (Use ↑/↓ arrows & Enter):", geminiModels)
+		parts := strings.Fields(geminiModels[idx])
+		if len(parts) > 0 {
+			cfg.Model = parts[0]
+		}
+	}
+
+	// Save to config file
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		configFile := filepath.Join(home, ".tertic", "config.env")
+		if cfg.Provider == "ollama" {
+			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"ollama\"\nexport OLLAMA_MODEL=\"%s\"\nexport OLLAMA_HOST=\"%s\"\n", cfg.Model, cfg.Host)), 0600)
+		} else if cfg.Provider == "openrouter" {
+			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"openrouter\"\nexport OPENROUTER_API_KEY=\"%s\"\nexport OPENROUTER_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
+		} else {
+			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"gemini\"\nexport GEMINI_API_KEY=\"%s\"\nexport GEMINI_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
+		}
+	}
+
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
+	fmt.Printf("%s✓ Active Model changed to:%s %s%s%s\n", ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
 }
 
 func getToolEmoji(name string) string {
@@ -443,7 +520,6 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			break
 		}
 
-		// Tool execution loop
 		for _, tc := range assistantMsg.ToolCalls {
 			fn := tc.Function
 			emoji := getToolEmoji(fn.Name)
@@ -601,22 +677,31 @@ func main() {
 	var gemClient *gemini.Client
 	var gemHistory []gemini.Content
 
-	if cfg.Provider == "ollama" {
-		ollama.EnsureOllamaRunning()
-		chatClient = ollama.NewClient(cfg.Host, cfg.Model)
-		chatHistory = append(chatHistory, openrouter.Message{
-			Role:    "system",
-			Content: SystemPrompt,
-		})
-	} else if cfg.Provider == "openrouter" {
-		chatClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
-		chatHistory = append(chatHistory, openrouter.Message{
-			Role:    "system",
-			Content: SystemPrompt,
-		})
-	} else {
-		gemClient = gemini.NewClient(cfg.APIKey, cfg.Model)
+	initClients := func() {
+		chatClient = nil
+		chatHistory = nil
+		gemClient = nil
+		gemHistory = nil
+
+		if cfg.Provider == "ollama" {
+			ollama.EnsureOllamaRunning()
+			chatClient = ollama.NewClient(cfg.Host, cfg.Model)
+			chatHistory = append(chatHistory, openrouter.Message{
+				Role:    "system",
+				Content: SystemPrompt,
+			})
+		} else if cfg.Provider == "openrouter" {
+			chatClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
+			chatHistory = append(chatHistory, openrouter.Message{
+				Role:    "system",
+				Content: SystemPrompt,
+			})
+		} else {
+			gemClient = gemini.NewClient(cfg.APIKey, cfg.Model)
+		}
 	}
+
+	initClients()
 
 	// Direct prompt execution (e.g. trtc "build an app")
 	if len(os.Args) > 1 {
@@ -636,7 +721,7 @@ func main() {
 
 	// Interactive Mode
 	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sMode:%s %s | %sModel:%s %s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model)
+	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(Type /model to switch)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
 	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -654,6 +739,13 @@ func main() {
 		if prompt == "exit" || prompt == "quit" {
 			fmt.Printf("%s👋 Goodbye!%s\n", ColorCyan, ColorReset)
 			break
+		}
+
+		// Handle /model command
+		if prompt == "/model" || prompt == "/models" {
+			switchModelInteractive(cfg)
+			initClients()
+			continue
 		}
 
 		if gemClient != nil {
