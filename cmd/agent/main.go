@@ -48,7 +48,7 @@ Your job is to talk to the user and write, debug, test, and deliver working code
 When the user greets you or asks questions (e.g. "hey", "hello", "what can you do?"), reply with normal conversational text.
 Only invoke tool functions when the user asks you to run bash commands, create files, edit files, or build a project.`
 
-// --- MOTION SPINNER ---
+// Motion Spinner
 type Spinner struct {
 	frames []string
 	msg    string
@@ -186,7 +186,6 @@ func unsafePointer(t *syscall.Termios) uintptr {
 
 // Config resolution
 func resolveConfig() (*AgentConfig, error) {
-	// 1. Direct env vars
 	if p := os.Getenv("TERTIC_PROVIDER"); p == "ollama" {
 		model := os.Getenv("OLLAMA_MODEL")
 		if model == "" {
@@ -215,7 +214,6 @@ func resolveConfig() (*AgentConfig, error) {
 		return &AgentConfig{Provider: "gemini", APIKey: strings.TrimSpace(key), Model: model}, nil
 	}
 
-	// 2. Saved Tertic config (~/.tertic/config.env)
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
@@ -271,7 +269,6 @@ func resolveConfig() (*AgentConfig, error) {
 		}
 	}
 
-	// 3. Interactive Setup Menu (Local vs Cloud API)
 	fmt.Println()
 	modeOptions := []string{
 		"1) Cloud API Key (Pre-configured OpenRouter or Google Gemini)",
@@ -318,7 +315,6 @@ func resolveConfig() (*AgentConfig, error) {
 		}
 	}
 
-	// Local Ollama Setup
 	var modelOptions []string
 	for _, m := range ollama.AvailableLocalModels {
 		modelOptions = append(modelOptions, fmt.Sprintf("%-22s [%-6s] - %s", m.ID, m.Size, m.Description))
@@ -365,11 +361,67 @@ func resolveConfig() (*AgentConfig, error) {
 // Interactive Model Switcher (/model)
 func switchModelInteractive(cfg *AgentConfig) {
 	fmt.Println()
-	if cfg.Provider == "ollama" {
+	categoryOpts := []string{
+		"1) 🌐 Cloud Remote API Models (Google Gemini, OpenRouter - Privileged)",
+		"2) 📱 Local Offline Ollama Models (Downloaded on Device)",
+		"3) 🔑 Change / Enter API Key",
+	}
+
+	catChoice := selectInteractive("What would you like to switch to? (Use ↑/↓ arrows & Enter):", categoryOpts)
+
+	if catChoice == 0 {
+		// Switch to Cloud Models
+		cloudOpts := []string{
+			"Google Gemini 3.1 Flash-Lite (High speed, Free tier)",
+			"Google Gemini 3 Flash Preview (Reasoning & Full tools)",
+			"OpenRouter: Cohere North Mini Code (Free, Fast, Tool-Enabled)",
+			"OpenRouter: Llama 3.3 70B (Free remote full-stack)",
+			"OpenRouter: Qwen 2.5 Coder 32B (Free remote coding)",
+			"OpenRouter: DeepSeek R1 (Free remote reasoning)",
+		}
+		cIdx := selectInteractive("Select Cloud Model to Use:", cloudOpts)
+		switch cIdx {
+		case 0:
+			cfg.Provider = "gemini"
+			cfg.Model = "gemini-3.1-flash-lite"
+		case 1:
+			cfg.Provider = "gemini"
+			cfg.Model = "gemini-3-flash-preview"
+		case 2:
+			cfg.Provider = "openrouter"
+			cfg.Model = "cohere/north-mini-code:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		case 3:
+			cfg.Provider = "openrouter"
+			cfg.Model = "meta-llama/llama-3.3-70b-instruct:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		case 4:
+			cfg.Provider = "openrouter"
+			cfg.Model = "qwen/qwen-2.5-coder-32b-instruct:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		case 5:
+			cfg.Provider = "openrouter"
+			cfg.Model = "deepseek/deepseek-r1:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		}
+
+	} else if catChoice == 1 {
+		// Switch to Local Ollama Models
+		cfg.Provider = "ollama"
+		if cfg.Host == "" {
+			cfg.Host = ollama.DefaultHost
+		}
 		models, err := ollama.GetDownloadedModels(cfg.Host)
 		if err != nil || len(models) == 0 {
-			fmt.Printf("%s[Info] Could not fetch downloaded models from Ollama daemon.%s\n", ColorYellow, ColorReset)
-			fmt.Println("Available recommended models to download:")
+			fmt.Printf("%s[Info] No downloaded models found. Choose one to pull:%s\n", ColorYellow, ColorReset)
 			var opts []string
 			for _, m := range ollama.AvailableLocalModels {
 				opts = append(opts, fmt.Sprintf("%-22s [%-6s]", m.ID, m.Size))
@@ -383,7 +435,7 @@ func switchModelInteractive(cfg *AgentConfig) {
 			spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
 			cfg.Model = chosen
 		} else {
-			opts := append(models, "➕ Download a new model...")
+			opts := append(models, "➕ Download another model...")
 			idx := selectInteractive("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
 
 			if idx == len(models) {
@@ -406,30 +458,31 @@ func switchModelInteractive(cfg *AgentConfig) {
 				}
 			}
 		}
-	} else if cfg.Provider == "openrouter" {
-		cloudModels := []string{
-			"cohere/north-mini-code:free (Free, Fast, Tool-Enabled)",
-			"meta-llama/llama-3.3-70b-instruct:free",
-			"qwen/qwen-2.5-coder-32b-instruct:free",
-			"deepseek/deepseek-r1:free",
-		}
-		idx := selectInteractive("Select OpenRouter Model (Use ↑/↓ arrows & Enter):", cloudModels)
-		parts := strings.Fields(cloudModels[idx])
-		if len(parts) > 0 {
-			cfg.Model = parts[0]
-		}
+
 	} else {
-		geminiModels := []string{
-			"gemini-3.1-flash-lite (Recommended, Free tier)",
-			"gemini-3-flash-preview",
+		// Change API Key option
+		keyOpts := []string{
+			"Google Gemini API Key",
+			"OpenRouter API Key",
 		}
-		idx := selectInteractive("Select Gemini Model (Use ↑/↓ arrows & Enter):", geminiModels)
-		parts := strings.Fields(geminiModels[idx])
-		if len(parts) > 0 {
-			cfg.Model = parts[0]
+		kIdx := selectInteractive("Which API Key do you want to provide?", keyOpts)
+		reader := bufio.NewReader(os.Stdin)
+		if kIdx == 0 {
+			fmt.Print("\nEnter your Google Gemini API Key: ")
+			k, _ := reader.ReadString('\n')
+			cfg.APIKey = strings.TrimSpace(k)
+			cfg.Provider = "gemini"
+			cfg.Model = gemini.DefaultModel
+		} else {
+			fmt.Print("\nEnter your OpenRouter API Key (sk-or-...): ")
+			k, _ := reader.ReadString('\n')
+			cfg.APIKey = strings.TrimSpace(k)
+			cfg.Provider = "openrouter"
+			cfg.Model = openrouter.DefaultModel
 		}
 	}
 
+	// Persist changes
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
@@ -443,7 +496,7 @@ func switchModelInteractive(cfg *AgentConfig) {
 	}
 
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
-	fmt.Printf("%s✓ Active Model changed to:%s %s%s%s\n", ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
+	fmt.Printf("%s✓ Active Mode:%s %s%s%s | %sModel:%s %s%s%s\n", ColorBold, ColorReset, ColorYellow, cfg.Provider, ColorReset, ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
 }
 
@@ -464,7 +517,6 @@ func getToolEmoji(name string) string {
 	}
 }
 
-// Checks if the user's prompt is a coding/tool task vs a casual conversation
 func isCodingTask(prompt string) bool {
 	p := strings.ToLower(strings.TrimSpace(prompt))
 	codingKeywords := []string{
@@ -480,7 +532,6 @@ func isCodingTask(prompt string) bool {
 	return false
 }
 
-// Parses JSON tool call anywhere inside content (e.g. within markdown or explanation text)
 func parseJSONToolCall(content string) (string, map[string]interface{}, bool) {
 	s := strings.TrimSpace(content)
 	start := strings.Index(s, `{"name":`)
@@ -497,7 +548,6 @@ func parseJSONToolCall(content string) (string, map[string]interface{}, bool) {
 		return "", nil, false
 	}
 
-	// Find matching closing brace
 	depth := 0
 	end := -1
 	for i := start; i < len(s); i++ {
@@ -541,7 +591,6 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 	})
 
 	var openRouterTools []openrouter.OpenRouterTool
-	// Only provide tool declarations if the prompt indicates a task or command
 	if isCodingTask(userPrompt) {
 		toolDefs := tools.GetToolDefinitions()
 		openRouterTools = openrouter.ConvertToolDefinitions(toolDefs)
@@ -568,7 +617,6 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 		assistantMsg := choice.Message
 		*history = append(*history, assistantMsg)
 
-		// Check if small model hallucinated tool call in JSON format inside content
 		rawToolName, rawArgs, isRawTool := parseJSONToolCall(assistantMsg.Content)
 		if isRawTool && isCodingTask(userPrompt) {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, openrouter.ToolCall{
@@ -778,7 +826,6 @@ func main() {
 
 	initClients()
 
-	// Direct prompt execution (e.g. trtc "build an app")
 	if len(os.Args) > 1 {
 		userPrompt := strings.Join(os.Args[1:], " ")
 		fmt.Printf("\n%s%s🚀 Tertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
@@ -794,7 +841,6 @@ func main() {
 		return
 	}
 
-	// Interactive Mode
 	fmt.Print(ColorCyan, Banner, ColorReset)
 	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(Type /model to switch)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
 	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
