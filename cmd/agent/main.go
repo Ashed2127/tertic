@@ -43,19 +43,10 @@ const Banner = `
 `
 
 const SystemPrompt = `You are Tertic, an autonomous AI software engineering agent running directly inside Termux on Android.
-Your job is to write, debug, test, and deliver working full-stack applications.
+Your job is to talk to the user and write, debug, test, and deliver working code and software.
 
-Tools available:
-1. execute_bash: Run shell commands, package managers (npm, pip, go, git), linters, build tools, dev servers.
-2. write_file: Create or overwrite files.
-3. read_file: Inspect existing code and logs.
-4. edit_file: Exact search and replace to modify parts of files.
-5. list_dir: Explore project directories.
-
-Rules:
-- Be autonomous: Do the work directly. Create the folders, write the code, install dependencies, run tests, and fix any errors.
-- Always be fast and concise.
-- When done, summarize what you built and how the user can test/run it.`
+When the user greets you or asks questions (e.g. "hey", "hello", "what can you do?"), reply with normal conversational text.
+Only invoke tool functions when the user asks you to run bash commands, create files, edit files, or build a project.`
 
 // --- MOTION SPINNER ---
 type Spinner struct {
@@ -392,7 +383,6 @@ func switchModelInteractive(cfg *AgentConfig) {
 			spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
 			cfg.Model = chosen
 		} else {
-			// List installed models
 			opts := append(models, "➕ Download a new model...")
 			idx := selectInteractive("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
 
@@ -410,7 +400,6 @@ func switchModelInteractive(cfg *AgentConfig) {
 				spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
 				cfg.Model = chosen
 			} else {
-				// Parse model name from selected string
 				parts := strings.Fields(models[idx])
 				if len(parts) > 0 {
 					cfg.Model = parts[0]
@@ -441,7 +430,6 @@ func switchModelInteractive(cfg *AgentConfig) {
 		}
 	}
 
-	// Save to config file
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
@@ -476,6 +464,71 @@ func getToolEmoji(name string) string {
 	}
 }
 
+// Checks if the user's prompt is a coding/tool task vs a casual conversation
+func isCodingTask(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	codingKeywords := []string{
+		"build", "create", "make", "write", "code", "run", "exec", "test",
+		"file", "install", "npm", "pip", "git", "bash", "delete", "edit", "list",
+		"cat", "ls", "dir", "grep", "server", "app", "fix", "debug", "compile",
+	}
+	for _, kw := range codingKeywords {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// Parses JSON tool call anywhere inside content (e.g. within markdown or explanation text)
+func parseJSONToolCall(content string) (string, map[string]interface{}, bool) {
+	s := strings.TrimSpace(content)
+	start := strings.Index(s, `{"name":`)
+	if start == -1 {
+		start = strings.Index(s, `{"name" :`)
+	}
+	if start == -1 {
+		start = strings.Index(s, "{\n  \"name\":")
+	}
+	if start == -1 {
+		start = strings.Index(s, "{\n \"name\":")
+	}
+	if start == -1 {
+		return "", nil, false
+	}
+
+	// Find matching closing brace
+	depth := 0
+	end := -1
+	for i := start; i < len(s); i++ {
+		if s[i] == '{' {
+			depth++
+		} else if s[i] == '}' {
+			depth--
+			if depth == 0 {
+				end = i + 1
+				break
+			}
+		}
+	}
+
+	if end == -1 {
+		return "", nil, false
+	}
+
+	jsonStr := s[start:end]
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return "", nil, false
+	}
+	name, ok1 := data["name"].(string)
+	args, ok2 := data["arguments"].(map[string]interface{})
+	if ok1 && ok2 {
+		return name, args, true
+	}
+	return "", nil, false
+}
+
 // --- OPENROUTER / OLLAMA COMPATIBLE TURN ---
 type ChatClient interface {
 	Chat(req openrouter.ChatCompletionRequest) (*openrouter.ChatCompletionResponse, error)
@@ -487,8 +540,12 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 		Content: userPrompt,
 	})
 
-	toolDefs := tools.GetToolDefinitions()
-	openRouterTools := openrouter.ConvertToolDefinitions(toolDefs)
+	var openRouterTools []openrouter.OpenRouterTool
+	// Only provide tool declarations if the prompt indicates a task or command
+	if isCodingTask(userPrompt) {
+		toolDefs := tools.GetToolDefinitions()
+		openRouterTools = openrouter.ConvertToolDefinitions(toolDefs)
+	}
 
 	maxSteps := 30
 	for step := 1; step <= maxSteps; step++ {
@@ -511,12 +568,21 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 		assistantMsg := choice.Message
 		*history = append(*history, assistantMsg)
 
-		if assistantMsg.Content != "" {
+		// Check if small model hallucinated tool call in JSON format inside content
+		rawToolName, rawArgs, isRawTool := parseJSONToolCall(assistantMsg.Content)
+		if isRawTool && isCodingTask(userPrompt) {
+			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, openrouter.ToolCall{
+				ID: fmt.Sprintf("call_%d", step),
+				Function: openrouter.FunctionCall{
+					Name:      rawToolName,
+					Arguments: assistantMsg.Content,
+				},
+			})
+		} else if assistantMsg.Content != "" {
 			fmt.Printf("%s%s%s\n", ColorReset, assistantMsg.Content, ColorReset)
 		}
 
 		if len(assistantMsg.ToolCalls) == 0 {
-			fmt.Printf("\n%s%s✨ Task complete!%s\n", ColorBold, ColorGreen, ColorReset)
 			break
 		}
 
@@ -525,7 +591,11 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			emoji := getToolEmoji(fn.Name)
 
 			var args map[string]interface{}
-			_ = json.Unmarshal([]byte(fn.Arguments), &args)
+			if isRawTool && rawArgs != nil {
+				args = rawArgs
+			} else {
+				_ = json.Unmarshal([]byte(fn.Arguments), &args)
+			}
 
 			actionDesc := fn.Arguments
 			if cmd, ok := args["command"].(string); ok {
@@ -572,16 +642,22 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 		},
 	})
 
-	toolDefs := tools.GetToolDefinitions()
+	var toolDefs []tools.ToolDefinition
+	if isCodingTask(userPrompt) {
+		toolDefs = tools.GetToolDefinitions()
+	}
+
 	req := gemini.GenerateContentRequest{
 		SystemInstruction: &gemini.SystemInstruction{
 			Parts: []gemini.Part{
 				{Text: SystemPrompt},
 			},
 		},
-		Tools: []gemini.ToolDeclarationWrapper{
+	}
+	if len(toolDefs) > 0 {
+		req.Tools = []gemini.ToolDeclarationWrapper{
 			{FunctionDeclarations: toolDefs},
-		},
+		}
 	}
 
 	maxSteps := 30
@@ -657,7 +733,6 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 				Parts: toolResponseParts,
 			})
 		} else {
-			fmt.Printf("\n%s%s✨ Task complete!%s\n", ColorBold, ColorGreen, ColorReset)
 			break
 		}
 	}
@@ -741,7 +816,6 @@ func main() {
 			break
 		}
 
-		// Handle /model command
 		if prompt == "/model" || prompt == "/models" {
 			switchModelInteractive(cfg)
 			initClients()
