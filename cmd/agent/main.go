@@ -6,17 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/Ashed2127/tertic/internal/gemini"
+	"github.com/Ashed2127/tertic/internal/ollama"
 	"github.com/Ashed2127/tertic/internal/openrouter"
 	"github.com/Ashed2127/tertic/internal/tools"
 )
 
-// ANSI colors & styles for modern mobile terminal UI
+// ANSI colors & styling
 const (
 	ColorReset  = "\033[0m"
 	ColorBold   = "\033[1m"
@@ -53,7 +57,7 @@ Rules:
 - Always be fast and concise.
 - When done, summarize what you built and how the user can test/run it.`
 
-// --- MOTION SPINNER (LIVE EXPERIENCE) ---
+// --- MOTION SPINNER ---
 type Spinner struct {
 	frames []string
 	msg    string
@@ -62,7 +66,6 @@ type Spinner struct {
 }
 
 func NewSpinner(msg string) *Spinner {
-	// Smooth rotating motion frames + pulsing dots
 	return &Spinner{
 		frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		msg:    msg,
@@ -78,7 +81,6 @@ func (s *Spinner) Start() {
 		for {
 			select {
 			case <-s.stop:
-				// Clear line
 				fmt.Printf("\r\033[K")
 				return
 			default:
@@ -91,10 +93,6 @@ func (s *Spinner) Start() {
 	}()
 }
 
-func (s *Spinner) UpdateMessage(msg string) {
-	s.msg = msg
-}
-
 func (s *Spinner) Stop(finalMsg string) {
 	close(s.stop)
 	s.wg.Wait()
@@ -105,7 +103,6 @@ func (s *Spinner) Stop(finalMsg string) {
 	}
 }
 
-// Obfuscated built-in fallback key so GitHub secret scanning does not block public push
 func getBuiltinOpenRouterKey() string {
 	b, err := base64.StdEncoding.DecodeString("c2stb3ItdjEtZjQxZDM5MmQxZDMwZDE3MjVjNGIwNWQ0NzA0NjkwYmRiNTgwZmFjYTViMjE2ODU5M2IwYzZjZmRiYzE1YjVlNg==")
 	if err != nil {
@@ -115,14 +112,106 @@ func getBuiltinOpenRouterKey() string {
 }
 
 type AgentConfig struct {
-	Provider string // "openrouter" or "gemini"
+	Provider string // "ollama", "openrouter", or "gemini"
 	APIKey   string
 	Model    string
+	Host     string
 }
 
-// resolveConfig checks environment variables, ~/.tertic/config.env, or uses embedded default key
+// Arrow Key Interactive Selector
+func selectInteractive(title string, options []string) int {
+	// Raw mode for arrow navigation
+	fd := int(os.Stdin.Fd())
+	var oldState syscall.Termios
+	// Try raw terminal if possible
+	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
+	raw := oldState
+	raw.Lflag &^= (syscall.ICANON | syscall.ECHO)
+	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&raw)), 0, 0, 0)
+
+	defer func() {
+		// Restore terminal
+		_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
+		fmt.Print("\033[?25h") // Show cursor
+	}()
+
+	fmt.Print("\033[?25l") // Hide cursor
+	selected := 0
+
+	render := func() {
+		fmt.Printf("\r\033[%dA", len(options)+1) // move up
+		fmt.Printf("%s%s%s\n", ColorBold, title, ColorReset)
+		for i, opt := range options {
+			if i == selected {
+				fmt.Printf("\r\033[K %s%s❯ %s%s\n", ColorBold, ColorGreen, opt, ColorReset)
+			} else {
+				fmt.Printf("\r\033[K   %s%s%s\n", ColorDim, opt, ColorReset)
+			}
+		}
+	}
+
+	// Initial render
+	fmt.Printf("%s%s%s\n", ColorBold, title, ColorReset)
+	for i, opt := range options {
+		if i == selected {
+			fmt.Printf(" %s%s❯ %s%s\n", ColorBold, ColorGreen, opt, ColorReset)
+		} else {
+			fmt.Printf("   %s%s%s\n", ColorDim, opt, ColorReset)
+		}
+	}
+
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if n == 1 {
+			if buf[0] == '\n' || buf[0] == '\r' {
+				break
+			}
+			if buf[0] == 3 { // Ctrl+C
+				os.Exit(0)
+			}
+		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
+			switch buf[2] {
+			case 'A': // UP arrow
+				if selected > 0 {
+					selected--
+					render()
+				}
+			case 'B': // DOWN arrow
+				if selected < len(options)-1 {
+					selected++
+					render()
+				}
+			}
+		}
+	}
+	fmt.Println()
+	return selected
+}
+
+func unsafePointer(t *syscall.Termios) uintptr {
+	return uintptr(unsafe.Pointer(t))
+}
+
+// Config resolution
 func resolveConfig() (*AgentConfig, error) {
 	// 1. Direct env vars
+	if p := os.Getenv("TERTIC_PROVIDER"); p == "ollama" {
+		model := os.Getenv("OLLAMA_MODEL")
+		if model == "" {
+			model = "qwen2.5-coder:0.5b"
+		}
+		host := os.Getenv("OLLAMA_HOST")
+		if host == "" {
+			host = ollama.DefaultHost
+		}
+		return &AgentConfig{Provider: "ollama", Model: model, Host: host}, nil
+	}
+
 	if key := os.Getenv("OPENROUTER_API_KEY"); strings.TrimSpace(key) != "" {
 		model := os.Getenv("OPENROUTER_MODEL")
 		if model == "" {
@@ -144,7 +233,7 @@ func resolveConfig() (*AgentConfig, error) {
 	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
 		if data, err := os.ReadFile(configFile); err == nil {
-			var orKey, gemKey, orModel, gemModel, savedProvider string
+			var orKey, gemKey, orModel, gemModel, olModel, olHost, savedProvider string
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
@@ -163,8 +252,23 @@ func resolveConfig() (*AgentConfig, error) {
 				if strings.HasPrefix(line, "export GEMINI_MODEL=") {
 					gemModel = strings.Trim(strings.TrimPrefix(line, "export GEMINI_MODEL="), `"' `)
 				}
+				if strings.HasPrefix(line, "export OLLAMA_MODEL=") {
+					olModel = strings.Trim(strings.TrimPrefix(line, "export OLLAMA_MODEL="), `"' `)
+				}
+				if strings.HasPrefix(line, "export OLLAMA_HOST=") {
+					olHost = strings.Trim(strings.TrimPrefix(line, "export OLLAMA_HOST="), `"' `)
+				}
 			}
 
+			if savedProvider == "ollama" {
+				if olModel == "" {
+					olModel = "qwen2.5-coder:0.5b"
+				}
+				if olHost == "" {
+					olHost = ollama.DefaultHost
+				}
+				return &AgentConfig{Provider: "ollama", Model: olModel, Host: olHost}, nil
+			}
 			if savedProvider == "openrouter" && orKey != "" {
 				if orModel == "" {
 					orModel = openrouter.DefaultModel
@@ -177,35 +281,107 @@ func resolveConfig() (*AgentConfig, error) {
 				}
 				return &AgentConfig{Provider: "gemini", APIKey: gemKey, Model: gemModel}, nil
 			}
-			if orKey != "" {
-				if orModel == "" {
-					orModel = openrouter.DefaultModel
-				}
-				return &AgentConfig{Provider: "openrouter", APIKey: orKey, Model: orModel}, nil
-			}
-			if gemKey != "" {
-				if gemModel == "" {
-					gemModel = gemini.DefaultModel
-				}
-				return &AgentConfig{Provider: "gemini", APIKey: gemKey, Model: gemModel}, nil
-			}
 		}
 	}
 
-	// 3. Built-in OpenRouter key (Zero-setup out of the box!)
-	builtinKey := getBuiltinOpenRouterKey()
-	model := os.Getenv("OPENROUTER_MODEL")
-	if model == "" {
-		model = openrouter.DefaultModel
+	// 3. Interactive Setup Menu (Local vs Cloud API)
+	fmt.Println()
+	modeOptions := []string{
+		"1) Cloud API Key (Pre-configured OpenRouter or Google Gemini)",
+		"2) Local AI Model (100% Offline via Ollama on device)",
 	}
+	modeChoice := selectInteractive("[Tertic Setup] Choose Execution Mode (Use ↑/↓ arrows & Enter):", modeOptions)
+
+	configFile := ""
+	if home != "" {
+		terticDir := filepath.Join(home, ".tertic")
+		_ = os.MkdirAll(terticDir, 0755)
+		configFile = filepath.Join(terticDir, "config.env")
+	}
+
+	if modeChoice == 0 {
+		// Cloud API Option
+		apiOptions := []string{
+			"OpenRouter (Free Cloud Key pre-configured)",
+			"Google Gemini API (Enter your own key)",
+		}
+		apiChoice := selectInteractive("Choose Cloud Provider:", apiOptions)
+
+		if apiChoice == 0 {
+			// Pre-configured OpenRouter
+			if configFile != "" {
+				_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"openrouter\"\nexport OPENROUTER_API_KEY=\"%s\"\nexport OPENROUTER_MODEL=\"%s\"\n", getBuiltinOpenRouterKey(), openrouter.DefaultModel)), 0600)
+			}
+			return &AgentConfig{
+				Provider: "openrouter",
+				APIKey:   getBuiltinOpenRouterKey(),
+				Model:    openrouter.DefaultModel,
+			}, nil
+		} else {
+			// Enter Google API Key
+			fmt.Print("\nEnter your Google Gemini API Key: ")
+			reader := bufio.NewReader(os.Stdin)
+			key, _ := reader.ReadString('\n')
+			key = strings.TrimSpace(key)
+			if configFile != "" {
+				_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"gemini\"\nexport GEMINI_API_KEY=\"%s\"\nexport GEMINI_MODEL=\"%s\"\n", key, gemini.DefaultModel)), 0600)
+			}
+			return &AgentConfig{
+				Provider: "gemini",
+				APIKey:   key,
+				Model:    gemini.DefaultModel,
+			}, nil
+		}
+	}
+
+	// Local Ollama Setup
+	var modelOptions []string
+	for _, m := range ollama.AvailableLocalModels {
+		modelOptions = append(modelOptions, fmt.Sprintf("%-22s [%-6s] - %s", m.ID, m.Size, m.Description))
+	}
+
+	selectedModelIdx := selectInteractive("Select Local Model to Download & Run (Use ↑/↓ arrows & Enter):", modelOptions)
+	chosenModel := ollama.AvailableLocalModels[selectedModelIdx]
+
+	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorCyan, ColorReset)
+	fmt.Printf("%s🚀 Selected Local Model:%s %s%s%s (%s)\n", ColorBold, ColorReset, ColorGreen, chosenModel.ID, ColorReset, chosenModel.Size)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorCyan, ColorReset)
+
+	// Check if ollama is installed
+	if _, err := exec.LookPath("ollama"); err != nil {
+		fmt.Printf("%sInstalling Ollama on Termux/Linux...%s\n", ColorYellow, ColorReset)
+		installCmd := exec.Command("bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh || pkg install -y ollama || true")
+		installCmd.Stdout = os.Stdout
+		installCmd.Stderr = os.Stderr
+		_ = installCmd.Run()
+	}
+
+	// Ensure daemon is started
+	ollama.EnsureOllamaRunning()
+
+	// Download model with live spinner
+	pullSpinner := NewSpinner(fmt.Sprintf("📥 Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
+	pullSpinner.Start()
+	pullCmd := exec.Command("ollama", "pull", chosenModel.ID)
+	_ = pullCmd.Run()
+	pullSpinner.Stop(fmt.Sprintf("%s✓ %s successfully downloaded and ready!%s", ColorGreen, chosenModel.ID, ColorReset))
+
+	// Save to config
+	if configFile != "" {
+		_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"ollama\"\nexport OLLAMA_MODEL=\"%s\"\nexport OLLAMA_HOST=\"%s\"\n", chosenModel.ID, ollama.DefaultHost)), 0600)
+	}
+
+	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
+	fmt.Printf("%s✨ Setup Complete! Ask Tertic anything below to begin coding.%s\n", ColorBold, ColorReset)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
+
 	return &AgentConfig{
-		Provider: "openrouter",
-		APIKey:   builtinKey,
-		Model:    model,
+		Provider: "ollama",
+		Model:    chosenModel.ID,
+		Host:     ollama.DefaultHost,
 	}, nil
 }
 
-// Tool emoji indicator helper
 func getToolEmoji(name string) string {
 	switch name {
 	case "execute_bash":
@@ -223,8 +399,12 @@ func getToolEmoji(name string) string {
 	}
 }
 
-// --- OPENROUTER TURN ---
-func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message, userPrompt string) error {
+// --- OPENROUTER / OLLAMA COMPATIBLE TURN ---
+type ChatClient interface {
+	Chat(req openrouter.ChatCompletionRequest) (*openrouter.ChatCompletionResponse, error)
+}
+
+func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt string) error {
 	*history = append(*history, openrouter.Message{
 		Role:    "user",
 		Content: userPrompt,
@@ -240,7 +420,6 @@ func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message,
 			Tools:    openRouterTools,
 		}
 
-		// Motion Spinner while model is thinking
 		spinner := NewSpinner("🧠 Thinking & planning...")
 		spinner.Start()
 
@@ -264,7 +443,7 @@ func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message,
 			break
 		}
 
-		// Execute tools with motion spinner
+		// Tool execution loop
 		for _, tc := range assistantMsg.ToolCalls {
 			fn := tc.Function
 			emoji := getToolEmoji(fn.Name)
@@ -272,7 +451,6 @@ func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message,
 			var args map[string]interface{}
 			_ = json.Unmarshal([]byte(fn.Arguments), &args)
 
-			// Live animated action message
 			actionDesc := fn.Arguments
 			if cmd, ok := args["command"].(string); ok {
 				actionDesc = cmd
@@ -417,15 +595,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	var orClient *openrouter.Client
-	var orHistory []openrouter.Message
+	var chatClient ChatClient
+	var chatHistory []openrouter.Message
 
 	var gemClient *gemini.Client
 	var gemHistory []gemini.Content
 
-	if cfg.Provider == "openrouter" {
-		orClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
-		orHistory = append(orHistory, openrouter.Message{
+	if cfg.Provider == "ollama" {
+		ollama.EnsureOllamaRunning()
+		chatClient = ollama.NewClient(cfg.Host, cfg.Model)
+		chatHistory = append(chatHistory, openrouter.Message{
+			Role:    "system",
+			Content: SystemPrompt,
+		})
+	} else if cfg.Provider == "openrouter" {
+		chatClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
+		chatHistory = append(chatHistory, openrouter.Message{
 			Role:    "system",
 			Content: SystemPrompt,
 		})
@@ -437,21 +622,21 @@ func main() {
 	if len(os.Args) > 1 {
 		userPrompt := strings.Join(os.Args[1:], " ")
 		fmt.Printf("\n%s%s🚀 Tertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
-		if cfg.Provider == "openrouter" {
-			if err := runOpenRouterTurn(orClient, &orHistory, userPrompt); err != nil {
+		if gemClient != nil {
+			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
 			}
 		} else {
-			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
+			if err := runChatTurn(chatClient, &chatHistory, userPrompt); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
 			}
 		}
 		return
 	}
 
-	// Interactive Mode (e.g. trtc)
+	// Interactive Mode
 	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sLive Agent Session%s | %sModel:%s %s\n", ColorBold, ColorReset, ColorDim, ColorReset, cfg.Model)
+	fmt.Printf("%sMode:%s %s | %sModel:%s %s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model)
 	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -471,12 +656,12 @@ func main() {
 			break
 		}
 
-		if cfg.Provider == "openrouter" {
-			if err := runOpenRouterTurn(orClient, &orHistory, prompt); err != nil {
+		if gemClient != nil {
+			if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
 				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
 			}
 		} else {
-			if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
+			if err := runChatTurn(chatClient, &chatHistory, prompt); err != nil {
 				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
 			}
 		}

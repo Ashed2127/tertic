@@ -47,10 +47,12 @@ trtc "build an express api with tests and git commit"
 ## ✨ Features
 
 - **⚡ Blazing Fast**: Single native Go binary (`<15ms` startup, `<15MB` RAM).
-- **🤖 Autonomous Tooling**: Executes shell commands, writes files, makes surgical code edits, and tests apps.
+- **🤖 Local & Cloud AI Options**:
+  - **Local Offline (Ollama)**: 100% offline & unlimited running `qwen2.5-coder:0.5b` (397MB), `deepseek-coder:1.3b` (776MB), `qwen2.5-coder:1.5b` (986MB), `deepseek-r1:1.5b` (1.1GB), `gemma:2b` (1.7GB), or `qwen2.5-coder:3b` (1.9GB).
+  - **Cloud APIs**: Free OpenRouter coding models or Google Gemini.
 - **✨ Live Experience**: Real-time rotating spinners and motion emoji indicators (`🧠 Thinking...`, `💻 Running bash`, `📝 Writing file`).
 - **🛡️ Android Survival**: Auto wake-lock prevents Android from sleeping the CPU during long coding tasks.
-- **🔄 Bring Your Own Key**: Use built-in free models, your own OpenRouter key, or Google Gemini (`export GEMINI_API_KEY="..."`).
+- **🔄 Arrow Key Menu**: Interactive setup menu with ↑/↓ arrow keys to pick models or switch providers.
 
 ---
 
