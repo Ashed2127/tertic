@@ -78,36 +78,6 @@ echo -e "   Tertic Setup Complete! 🎉"
 echo -e "==========================================${NC}"
 echo ""
 
-# Prompt for API Key if not already present
-CONFIG_FILE="$HOME/.tertic/config.env"
-if ! grep -q "OPENROUTER_API_KEY\|GEMINI_API_KEY" "$CONFIG_FILE" 2>/dev/null; then
-    echo -e "${CYAN}${BOLD}[Tertic Setup] Choose your AI Provider:${NC}"
-    echo -e "  ${GREEN}1) OpenRouter${NC} (Recommended: 100% Free Models: Llama 3.3, Qwen Coder, DeepSeek)"
-    echo -e "  ${YELLOW}2) Google Gemini Studio${NC} (Gemini Flash-Lite)"
-    read -p "Select [1 or 2, default: 1]: " PROVIDER_CHOICE
-
-    if [ "$PROVIDER_CHOICE" = "2" ]; then
-        echo -e "\nGet a free key at: ${CYAN}https://aistudio.google.com/app/apikey${NC}"
-        read -p "Google Gemini API Key: " USER_KEY
-        if [ -n "$USER_KEY" ]; then
-            mkdir -p "$HOME/.tertic"
-            echo "export TERTIC_PROVIDER=\"gemini\"" >> "$CONFIG_FILE"
-            echo "export GEMINI_API_KEY=\"$USER_KEY\"" >> "$CONFIG_FILE"
-            echo -e "${GREEN}✓ Google Gemini key saved to $CONFIG_FILE${NC}"
-        fi
-    else
-        echo -e "\nGet a free key at: ${CYAN}https://openrouter.ai/keys${NC}"
-        read -p "OpenRouter API Key (sk-or-...): " USER_KEY
-        if [ -n "$USER_KEY" ]; then
-            mkdir -p "$HOME/.tertic"
-            echo "export TERTIC_PROVIDER=\"openrouter\"" >> "$CONFIG_FILE"
-            echo "export OPENROUTER_API_KEY=\"$USER_KEY\"" >> "$CONFIG_FILE"
-            echo "export OPENROUTER_MODEL=\"meta-llama/llama-3.3-70b-instruct:free\"" >> "$CONFIG_FILE"
-            echo -e "${GREEN}✓ OpenRouter key saved to $CONFIG_FILE${NC}"
-        fi
-    fi
-fi
-
 echo ""
 echo -e "${GREEN}Start the agent anytime with the short command:${NC}"
 echo -e "   ${BOLD}${CYAN}trtc${NC}                 (starts interactive agent session)"

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultModel = "meta-llama/llama-3.3-70b-instruct:free"
+	DefaultModel = "cohere/north-mini-code:free"
 	APIBaseURL   = "https://openrouter.ai/api/v1/chat/completions"
 )
 
