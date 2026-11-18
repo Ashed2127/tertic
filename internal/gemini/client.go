@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultModel = "gemini-3.8-flash"
+	DefaultModel = "gemini-3-flash-preview"
 	APIBaseURL   = "https://generativelanguage.googleapis.com/v1beta/models"
 )
 
@@ -43,11 +43,13 @@ type Content struct {
 
 type Part struct {
 	Text             string            `json:"text,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
 }
 
 type FunctionCall struct {
+	ID   string                 `json:"id,omitempty"`
 	Name string                 `json:"name"`
 	Args map[string]interface{} `json:"args"`
 }
