@@ -205,7 +205,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := gemini.NewClient(apiKey, gemini.DefaultModel)
+	// Allow model override via GEMINI_MODEL env var if desired
+	model := os.Getenv("GEMINI_MODEL")
+	if model == "" {
+		model = gemini.DefaultModel
+	}
+	client := gemini.NewClient(apiKey, model)
 	var history []gemini.Content
 
 	// If prompt passed directly in command line (e.g. tertic "build an app")
