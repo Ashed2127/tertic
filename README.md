@@ -11,48 +11,56 @@ Tertic turns any Android phone into an autonomous AI development machine. It pro
 - **Agent Ecosystem:** Native runners and glibc bridges for **Devin CLI** and **Antigravity CLI (`agy`)**.
 - **Mobile Hardware Bridge:** Android push notifications and vibration alerts via `termux-api` when agents complete tasks.
 
-## Quick Start
+## Installation on Termux ⚡
 
-1. **In Termux, install Tertic**:
-   ```bash
-   pkg update && pkg upgrade -y
-   pkg install -y git curl
-   git clone https://github.com/Ashed2127/tertic.git
-   cd tertic
-   bash setup.sh
-   ```
+Just run this one-line installer in Termux:
 
-2. **Run Diagnostics & Auto-Optimization**:
-   ```bash
-   tertic doctor     # Inspect device profile, RAM tier, and missing tools
-   tertic optimize   # Auto-apply memory, swap, keyboard, and wake-lock tweaks
-   ```
+```bash
+curl -sSL https://raw.githubusercontent.com/Ashed2127/tertic/main/install.sh | bash
+```
 
-3. **Install Your AI Agent of Choice**:
-   - For **Devin CLI**:
-     ```bash
-     bash install-devin-linux.sh
-     ```
-   - For **Antigravity CLI (`agy`)**:
-     ```bash
-     bash install-antigravity.sh
-     ```
+It will install all dependencies, build the high-speed agent, and prompt you to paste your Google AI (Gemini) API Key.
 
-4. **Launch Agent in Crash-Proof Background Session**:
-   ```bash
-   tertic run devin
-   # or
-   tertic run agy
-   ```
+---
 
-## CLI Reference
+## Usage (`trtc`)
+
+Just like `devin` or `agy`, simply type **`trtc`**:
+
+### 1. Interactive Agent Mode
+```bash
+trtc
+```
+Starts the full interactive session with live tool calling:
+```
+  _____         _   _      
+ |_   _|__ _ __| |_(_) ___ 
+   | |/ _ \ '__| __| |/ __|
+   | |  __/ |  | |_| | (__ 
+   |_|\___|_|   \__|_|\___|
+ Autonomous AI Coding Agent for Termux (Gemini Flash)
+
+Interactive Agent Mode (type your instructions or 'exit' to quit)
+
+trtc > create a react vite app and test it with a python backend
+```
+
+### 2. Direct Task Execution
+```bash
+trtc "Build a full-stack Node.js API with SQLite and user auth"
+```
+
+---
+
+## Environment Optimization & Diagnostics
 
 | Command | Description |
 |---|---|
-| `tertic doctor` | Analyzes hardware, memory tiers, and agent dependencies |
-| `tertic optimize` | Auto-tunes swap, heap limits, and mobile keyboard shortcuts |
-| `tertic run <agent>` | Runs the agent in a persistent `tmux` session with wake-lock |
-| `tertic notify <title> <msg>` | Sends a native Android notification when tasks finish |
+| `trtc` | Starts the native autonomous AI coding agent |
+| `trtc "task"` | Directly executes a coding task |
+| `trtc doctor` | Hardware diagnostics & memory profile inspection |
+| `trtc optimize` | Auto-tunes RAM heap caps, swap, and mobile keyboard |
+| `trtc run <cmd>` | Runs external heavy agents in crash-proof tmux daemon |
 - First setup takes ~10-15 minutes (Ubuntu download)
 
 Check `docs/` for more details.

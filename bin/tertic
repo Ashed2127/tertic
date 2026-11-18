@@ -235,12 +235,47 @@ cmd_notify() {
 }
 
 # -----------------------------------------------------------------------------
+# Command: code / agent (Native high-speed Go agent)
+# -----------------------------------------------------------------------------
+cmd_code() {
+    detect_system
+    # Ensure wake lock is engaged so Android doesn't kill the task
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+    AGENT_BIN="$TERTIC_BIN/tertic-agent"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Check local repo bin or global bin
+    if [ ! -x "$AGENT_BIN" ]; then
+        if [ -x "$SCRIPT_DIR/tertic-agent" ]; then
+            AGENT_BIN="$SCRIPT_DIR/tertic-agent"
+        elif command -v tertic-agent >/dev/null 2>&1; then
+            AGENT_BIN="$(command -v tertic-agent)"
+        else
+            echo -e "${YELLOW}Compiling Tertic Go Agent...${NC}"
+            if command -v go >/dev/null 2>&1; then
+                (cd "$SCRIPT_DIR/.." && go build -o "$SCRIPT_DIR/tertic-agent" cmd/agent/main.go)
+                AGENT_BIN="$SCRIPT_DIR/tertic-agent"
+            else
+                echo -e "${RED}Error: tertic-agent binary not found and 'go' is not installed.${NC}"
+                echo "Please run: pkg install golang && cd tertic && go build -o bin/tertic-agent cmd/agent/main.go"
+                exit 1
+            fi
+        fi
+    fi
+
+    # Run the agent with whatever arguments were provided
+    "$AGENT_BIN" "$@"
+}
+
+# -----------------------------------------------------------------------------
 # Help
 # -----------------------------------------------------------------------------
 cmd_help() {
     banner
     echo -e "Usage: ${BOLD}tertic <command> [options]${NC}\n"
     echo "Commands:"
+    echo -e "  ${BOLD}code <task>${NC}  Run the native autonomous AI agent using your Google API Key"
     echo -e "  ${BOLD}doctor${NC}       Inspect hardware, OS, and agent readiness"
     echo -e "  ${BOLD}optimize${NC}     Auto-tune memory, CPU limits, keyboard, and background wake-lock"
     echo -e "  ${BOLD}run <agent>${NC}  Safely launch an agent inside a persistent, crash-proof session"
@@ -265,12 +300,15 @@ case "$1" in
         shift
         cmd_notify "$@"
         ;;
-    help|--help|-h|"")
+    help|--help|-h)
         cmd_help
         ;;
+    code|agent)
+        shift
+        cmd_code "$@"
+        ;;
     *)
-        echo -e "${RED}Unknown command: $1${NC}"
-        cmd_help
-        exit 1
+        # Default behavior: Just typing 'tertic' or 'tertic "prompt"' directly starts the AI Agent!
+        cmd_code "$@"
         ;;
 esac
