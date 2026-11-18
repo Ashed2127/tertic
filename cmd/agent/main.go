@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Ashed2127/tertic/internal/gemini"
+	"github.com/Ashed2127/tertic/internal/openrouter"
 	"github.com/Ashed2127/tertic/internal/tools"
 )
 
@@ -28,7 +30,7 @@ const Banner = `
    | |/ _ \ '__| __| |/ __|
    | |  __/ |  | |_| | (__ 
    |_|\___|_|   \__|_|\___|
- Autonomous AI Coding Agent for Termux (Gemini Flash)
+ Autonomous AI Coding Agent for Termux (OpenRouter & Gemini)
 `
 
 const SystemPrompt = `You are Tertic, an autonomous AI software engineering agent running directly inside Termux on Android.
@@ -46,59 +48,122 @@ Rules:
 - Always be fast and concise.
 - When done, summarize what you built and how the user can test/run it.`
 
-// resolveAPIKey checks environment variables, ~/.tertic/config.env, or prompts the user interactively
-func resolveAPIKey() (string, error) {
-	// 1. Direct env var
-	if key := os.Getenv("GEMINI_API_KEY"); strings.TrimSpace(key) != "" {
-		return strings.TrimSpace(key), nil
+type AgentConfig struct {
+	Provider string // "openrouter" or "gemini"
+	APIKey   string
+	Model    string
+}
+
+// resolveConfig checks environment variables, ~/.tertic/config.env, or prompts the user interactively
+func resolveConfig() (*AgentConfig, error) {
+	// 1. Direct env vars
+	if key := os.Getenv("OPENROUTER_API_KEY"); strings.TrimSpace(key) != "" {
+		model := os.Getenv("OPENROUTER_MODEL")
+		if model == "" {
+			model = openrouter.DefaultModel
+		}
+		return &AgentConfig{Provider: "openrouter", APIKey: strings.TrimSpace(key), Model: model}, nil
 	}
-	if key := os.Getenv("GOOGLE_API_KEY"); strings.TrimSpace(key) != "" {
-		return strings.TrimSpace(key), nil
+
+	if key := os.Getenv("GEMINI_API_KEY"); strings.TrimSpace(key) != "" {
+		model := os.Getenv("GEMINI_MODEL")
+		if model == "" {
+			model = gemini.DefaultModel
+		}
+		return &AgentConfig{Provider: "gemini", APIKey: strings.TrimSpace(key), Model: model}, nil
 	}
 
 	// 2. Saved Tertic config (~/.tertic/config.env)
-	home, err := os.UserHomeDir()
-	if err == nil {
+	home, _ := os.UserHomeDir()
+	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
 		if data, err := os.ReadFile(configFile); err == nil {
+			var orKey, gemKey, orModel, gemModel, savedProvider string
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "export TERTIC_PROVIDER=") {
+					savedProvider = strings.Trim(strings.TrimPrefix(line, "export TERTIC_PROVIDER="), `"' `)
+				}
+				if strings.HasPrefix(line, "export OPENROUTER_API_KEY=") {
+					orKey = strings.Trim(strings.TrimPrefix(line, "export OPENROUTER_API_KEY="), `"' `)
+				}
+				if strings.HasPrefix(line, "export OPENROUTER_MODEL=") {
+					orModel = strings.Trim(strings.TrimPrefix(line, "export OPENROUTER_MODEL="), `"' `)
+				}
 				if strings.HasPrefix(line, "export GEMINI_API_KEY=") {
-					val := strings.TrimPrefix(line, "export GEMINI_API_KEY=")
-					val = strings.Trim(val, `"' `)
-					if val != "" {
-						return val, nil
-					}
+					gemKey = strings.Trim(strings.TrimPrefix(line, "export GEMINI_API_KEY="), `"' `)
 				}
-				if strings.HasPrefix(line, "export GOOGLE_API_KEY=") {
-					val := strings.TrimPrefix(line, "export GOOGLE_API_KEY=")
-					val = strings.Trim(val, `"' `)
-					if val != "" {
-						return val, nil
-					}
+				if strings.HasPrefix(line, "export GEMINI_MODEL=") {
+					gemModel = strings.Trim(strings.TrimPrefix(line, "export GEMINI_MODEL="), `"' `)
 				}
+			}
+
+			if savedProvider == "openrouter" && orKey != "" {
+				if orModel == "" {
+					orModel = openrouter.DefaultModel
+				}
+				return &AgentConfig{Provider: "openrouter", APIKey: orKey, Model: orModel}, nil
+			}
+			if savedProvider == "gemini" && gemKey != "" {
+				if gemModel == "" {
+					gemModel = gemini.DefaultModel
+				}
+				return &AgentConfig{Provider: "gemini", APIKey: gemKey, Model: gemModel}, nil
+			}
+			if orKey != "" {
+				if orModel == "" {
+					orModel = openrouter.DefaultModel
+				}
+				return &AgentConfig{Provider: "openrouter", APIKey: orKey, Model: orModel}, nil
+			}
+			if gemKey != "" {
+				if gemModel == "" {
+					gemModel = gemini.DefaultModel
+				}
+				return &AgentConfig{Provider: "gemini", APIKey: gemKey, Model: gemModel}, nil
 			}
 		}
 	}
 
-	// 3. Prompt user interactively
-	fmt.Printf("%s%s[Tertic Setup]%s Google Gemini API Key required.\n", ColorBold, ColorYellow, ColorReset)
-	fmt.Printf("Get your free key at: %shttps://aistudio.google.com/app/apikey%s\n\n", ColorCyan, ColorReset)
-	fmt.Print("Paste your Google API Key: ")
+	// 3. Interactive Setup Menu
+	fmt.Printf("%s%s[Tertic Setup] Choose an AI Provider:%s\n\n", ColorBold, ColorCyan, ColorReset)
+	fmt.Printf("  %s1) OpenRouter%s (Recommended: 100%% Free Models: Llama 3.3, Qwen Coder, DeepSeek)\n", ColorGreen, ColorReset)
+	fmt.Printf("  %s2) Google Gemini Studio%s (Gemini Flash-Lite)\n\n", ColorYellow, ColorReset)
+	fmt.Print("Select [1 or 2, default: 1]: ")
 
 	reader := bufio.NewReader(os.Stdin)
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	provider := "openrouter"
+	var keyPrompt, keyURL, defaultModel string
+
+	if choice == "2" {
+		provider = "gemini"
+		keyURL = "https://aistudio.google.com/app/apikey"
+		keyPrompt = "Google Gemini API Key"
+		defaultModel = gemini.DefaultModel
+	} else {
+		provider = "openrouter"
+		keyURL = "https://openrouter.ai/keys (Free account)"
+		keyPrompt = "OpenRouter API Key (sk-or-...)"
+		defaultModel = openrouter.DefaultModel
+	}
+
+	fmt.Printf("\nGet your free key at: %s%s%s\n", ColorCyan, keyURL, ColorReset)
+	fmt.Printf("Paste your %s: ", keyPrompt)
+
 	key, err := reader.ReadString('\n')
 	if err != nil {
-		return "", fmt.Errorf("failed to read API key from input: %w", err)
+		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return "", fmt.Errorf("API key cannot be empty")
+		return nil, fmt.Errorf("API key cannot be empty")
 	}
 
-	// Save to ~/.tertic/config.env for future use
+	// Save to config.env
 	if home != "" {
 		terticDir := filepath.Join(home, ".tertic")
 		_ = os.MkdirAll(terticDir, 0755)
@@ -106,16 +171,94 @@ func resolveAPIKey() (string, error) {
 
 		f, err := os.OpenFile(configFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err == nil {
-			_, _ = f.WriteString(fmt.Sprintf("\nexport GEMINI_API_KEY=\"%s\"\n", key))
+			_, _ = f.WriteString(fmt.Sprintf("\nexport TERTIC_PROVIDER=\"%s\"\n", provider))
+			if provider == "openrouter" {
+				_, _ = f.WriteString(fmt.Sprintf("export OPENROUTER_API_KEY=\"%s\"\n", key))
+				_, _ = f.WriteString(fmt.Sprintf("export OPENROUTER_MODEL=\"%s\"\n", defaultModel))
+			} else {
+				_, _ = f.WriteString(fmt.Sprintf("export GEMINI_API_KEY=\"%s\"\n", key))
+				_, _ = f.WriteString(fmt.Sprintf("export GEMINI_MODEL=\"%s\"\n", defaultModel))
+			}
 			_ = f.Close()
-			fmt.Printf("%s✓ API key saved! You won't have to enter it again.%s\n\n", ColorGreen, ColorReset)
+			fmt.Printf("%s✓ Settings saved to %s%s\n\n", ColorGreen, configFile, ColorReset)
 		}
 	}
 
-	return key, nil
+	return &AgentConfig{
+		Provider: provider,
+		APIKey:   key,
+		Model:    defaultModel,
+	}, nil
 }
 
-func runAgentTurn(client *gemini.Client, history *[]gemini.Content, userPrompt string) error {
+// --- OPENROUTER TURN ---
+func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message, userPrompt string) error {
+	*history = append(*history, openrouter.Message{
+		Role:    "user",
+		Content: userPrompt,
+	})
+
+	toolDefs := tools.GetToolDefinitions()
+	openRouterTools := openrouter.ConvertToolDefinitions(toolDefs)
+
+	maxSteps := 30
+	for step := 1; step <= maxSteps; step++ {
+		req := openrouter.ChatCompletionRequest{
+			Messages: *history,
+			Tools:    openRouterTools,
+		}
+
+		resp, err := client.Chat(req)
+		if err != nil {
+			return err
+		}
+
+		choice := resp.Choices[0]
+		assistantMsg := choice.Message
+		*history = append(*history, assistantMsg)
+
+		if assistantMsg.Content != "" {
+			fmt.Printf("%s%s%s\n", ColorReset, assistantMsg.Content, ColorReset)
+		}
+
+		if len(assistantMsg.ToolCalls) == 0 {
+			fmt.Printf("\n%s%s✓ Task completed!%s\n", ColorBold, ColorGreen, ColorReset)
+			break
+		}
+
+		// Execute tools
+		for _, tc := range assistantMsg.ToolCalls {
+			fn := tc.Function
+			fmt.Printf("\n%s%s⚡ [%s]:%s %s\n", ColorBold, ColorYellow, fn.Name, ColorReset, fn.Arguments)
+
+			var args map[string]interface{}
+			_ = json.Unmarshal([]byte(fn.Arguments), &args)
+
+			output, toolErr := tools.ExecuteTool(fn.Name, args)
+			if toolErr != nil {
+				output = fmt.Sprintf("Error: %v", toolErr)
+				fmt.Printf("%s✗ Error: %v%s\n", ColorRed, toolErr, ColorReset)
+			} else {
+				lines := strings.Split(output, "\n")
+				preview := output
+				if len(lines) > 5 {
+					preview = strings.Join(lines[:5], "\n") + fmt.Sprintf("\n... (+%d more lines)", len(lines)-5)
+				}
+				fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+			}
+
+			*history = append(*history, openrouter.Message{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    output,
+			})
+		}
+	}
+	return nil
+}
+
+// --- GEMINI TURN ---
+func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt string) error {
 	*history = append(*history, gemini.Content{
 		Role: "user",
 		Parts: []gemini.Part{
@@ -141,7 +284,7 @@ func runAgentTurn(client *gemini.Client, history *[]gemini.Content, userPrompt s
 
 		resp, err := client.Generate(req)
 		if err != nil {
-			return fmt.Errorf("Gemini API error: %w", err)
+			return err
 		}
 
 		candidate := resp.Candidates[0]
@@ -191,7 +334,7 @@ func runAgentTurn(client *gemini.Client, history *[]gemini.Content, userPrompt s
 				Parts: toolResponseParts,
 			})
 		} else {
-			fmt.Printf("\n%s%s✓ Done!%s\n", ColorBold, ColorGreen, ColorReset)
+			fmt.Printf("\n%s%s✓ Task completed!%s\n", ColorBold, ColorGreen, ColorReset)
 			break
 		}
 	}
@@ -199,37 +342,52 @@ func runAgentTurn(client *gemini.Client, history *[]gemini.Content, userPrompt s
 }
 
 func main() {
-	apiKey, err := resolveAPIKey()
+	cfg, err := resolveConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", ColorRed, err, ColorReset)
 		os.Exit(1)
 	}
 
-	// Allow model override via GEMINI_MODEL env var if desired
-	model := os.Getenv("GEMINI_MODEL")
-	if model == "" {
-		model = gemini.DefaultModel
-	}
-	client := gemini.NewClient(apiKey, model)
-	var history []gemini.Content
+	var orClient *openrouter.Client
+	var orHistory []openrouter.Message
 
-	// If prompt passed directly in command line (e.g. tertic "build an app")
+	var gemClient *gemini.Client
+	var gemHistory []gemini.Content
+
+	if cfg.Provider == "openrouter" {
+		orClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
+		orHistory = append(orHistory, openrouter.Message{
+			Role:    "system",
+			Content: SystemPrompt,
+		})
+	} else {
+		gemClient = gemini.NewClient(cfg.APIKey, cfg.Model)
+	}
+
+	// Direct prompt execution (e.g. trtc "build an app")
 	if len(os.Args) > 1 {
 		userPrompt := strings.Join(os.Args[1:], " ")
-		fmt.Printf("\n%s%s🚀 Tertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
-		if err := runAgentTurn(client, &history, userPrompt); err != nil {
-			fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
+		fmt.Printf("\n%s%s🚀 Tertic Agent (%s - %s):%s %s\n\n", ColorBold, ColorCyan, cfg.Provider, cfg.Model, ColorReset, userPrompt)
+		if cfg.Provider == "openrouter" {
+			if err := runOpenRouterTurn(orClient, &orHistory, userPrompt); err != nil {
+				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
+			}
+		} else {
+			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
+				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
+			}
 		}
 		return
 	}
 
-	// Interactive Mode: when user just runs `tertic`
+	// Interactive Mode (e.g. trtc)
 	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sInteractive Agent Mode%s (type your instructions or 'exit' to quit)\n\n", ColorBold, ColorReset)
+	fmt.Printf("%sProvider:%s %s | %sModel:%s %s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model)
+	fmt.Printf("%sInteractive Mode%s (type your instructions or 'exit' to quit)\n\n", ColorBold, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Printf("%s%stertic > %s", ColorBold, ColorGreen, ColorReset)
+		fmt.Printf("%s%strtc > %s", ColorBold, ColorGreen, ColorReset)
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			break
@@ -244,8 +402,14 @@ func main() {
 			break
 		}
 
-		if err := runAgentTurn(client, &history, prompt); err != nil {
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+		if cfg.Provider == "openrouter" {
+			if err := runOpenRouterTurn(orClient, &orHistory, prompt); err != nil {
+				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+			}
+		} else {
+			if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
+				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+			}
 		}
 		fmt.Println()
 	}

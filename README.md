@@ -19,7 +19,9 @@ Just run this one-line installer in Termux:
 curl -sSL https://raw.githubusercontent.com/Ashed2127/tertic/main/install.sh | bash
 ```
 
-It will install all dependencies, build the high-speed agent, and prompt you to paste your Google AI (Gemini) API Key.
+It will install all dependencies, build the high-speed agent, and let you choose your AI provider:
+- **Option 1: OpenRouter (Recommended)**: 100% free coding models with no strict quotas (`meta-llama/llama-3.3-70b-instruct:free`, `qwen/qwen-2.5-coder-32b-instruct:free`, `deepseek/deepseek-r1:free`).
+- **Option 2: Google Gemini Studio**: Direct Google Gemini API key.
 
 ---
 
@@ -38,16 +40,31 @@ Starts the full interactive session with live tool calling:
    | |/ _ \ '__| __| |/ __|
    | |  __/ |  | |_| | (__ 
    |_|\___|_|   \__|_|\___|
- Autonomous AI Coding Agent for Termux (Gemini Flash)
+ Autonomous AI Coding Agent for Termux (OpenRouter & Gemini)
 
-Interactive Agent Mode (type your instructions or 'exit' to quit)
+Provider: openrouter | Model: meta-llama/llama-3.3-70b-instruct:free
+Interactive Mode (type your instructions or 'exit' to quit)
 
-trtc > create a react vite app and test it with a python backend
+trtc > create a fullstack react + express app and run tests
 ```
 
 ### 2. Direct Task Execution
 ```bash
 trtc "Build a full-stack Node.js API with SQLite and user auth"
+```
+
+---
+
+## Switching Models Anytime
+
+You can switch models or providers anytime using environment variables or in `~/.tertic/config.env`:
+
+```bash
+# To switch to Qwen Coder (Free on OpenRouter):
+export OPENROUTER_MODEL="qwen/qwen-2.5-coder-32b-instruct:free"
+
+# To switch to DeepSeek R1 (Free on OpenRouter):
+export OPENROUTER_MODEL="deepseek/deepseek-r1:free"
 ```
 
 ---
