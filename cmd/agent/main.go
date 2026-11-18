@@ -8,20 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Ashed2127/tertic/internal/gemini"
 	"github.com/Ashed2127/tertic/internal/openrouter"
 	"github.com/Ashed2127/tertic/internal/tools"
 )
 
-// ANSI colors for clean mobile terminal UI
+// ANSI colors & styles for modern mobile terminal UI
 const (
 	ColorReset  = "\033[0m"
 	ColorBold   = "\033[1m"
+	ColorDim    = "\033[2m"
 	ColorRed    = "\033[31m"
 	ColorGreen  = "\033[32m"
 	ColorYellow = "\033[33m"
 	ColorBlue   = "\033[34m"
+	ColorPurple = "\033[35m"
 	ColorCyan   = "\033[36m"
 )
 
@@ -31,7 +35,7 @@ const Banner = `
    | |/ _ \ '__| __| |/ __|
    | |  __/ |  | |_| | (__ 
    |_|\___|_|   \__|_|\___|
- Autonomous AI Coding Agent for Termux (OpenRouter & Gemini)
+ Autonomous AI Coding Agent for Termux
 `
 
 const SystemPrompt = `You are Tertic, an autonomous AI software engineering agent running directly inside Termux on Android.
@@ -48,6 +52,58 @@ Rules:
 - Be autonomous: Do the work directly. Create the folders, write the code, install dependencies, run tests, and fix any errors.
 - Always be fast and concise.
 - When done, summarize what you built and how the user can test/run it.`
+
+// --- MOTION SPINNER (LIVE EXPERIENCE) ---
+type Spinner struct {
+	frames []string
+	msg    string
+	stop   chan struct{}
+	wg     sync.WaitGroup
+}
+
+func NewSpinner(msg string) *Spinner {
+	// Smooth rotating motion frames + pulsing dots
+	return &Spinner{
+		frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		msg:    msg,
+		stop:   make(chan struct{}),
+	}
+}
+
+func (s *Spinner) Start() {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		i := 0
+		for {
+			select {
+			case <-s.stop:
+				// Clear line
+				fmt.Printf("\r\033[K")
+				return
+			default:
+				frame := s.frames[i%len(s.frames)]
+				fmt.Printf("\r%s%s%s %s%s%s", ColorCyan, frame, ColorReset, ColorDim, s.msg, ColorReset)
+				i++
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+}
+
+func (s *Spinner) UpdateMessage(msg string) {
+	s.msg = msg
+}
+
+func (s *Spinner) Stop(finalMsg string) {
+	close(s.stop)
+	s.wg.Wait()
+	if finalMsg != "" {
+		fmt.Printf("\r\033[K%s\n", finalMsg)
+	} else {
+		fmt.Printf("\r\033[K")
+	}
+}
 
 // Obfuscated built-in fallback key so GitHub secret scanning does not block public push
 func getBuiltinOpenRouterKey() string {
@@ -149,6 +205,24 @@ func resolveConfig() (*AgentConfig, error) {
 	}, nil
 }
 
+// Tool emoji indicator helper
+func getToolEmoji(name string) string {
+	switch name {
+	case "execute_bash":
+		return "💻"
+	case "write_file":
+		return "📝"
+	case "read_file":
+		return "🔍"
+	case "edit_file":
+		return "✂️"
+	case "list_dir":
+		return "📂"
+	default:
+		return "⚡"
+	}
+}
+
 // --- OPENROUTER TURN ---
 func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message, userPrompt string) error {
 	*history = append(*history, openrouter.Message{
@@ -166,10 +240,16 @@ func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message,
 			Tools:    openRouterTools,
 		}
 
+		// Motion Spinner while model is thinking
+		spinner := NewSpinner("🧠 Thinking & planning...")
+		spinner.Start()
+
 		resp, err := client.Chat(req)
 		if err != nil {
+			spinner.Stop(fmt.Sprintf("%s❌ Error: %v%s", ColorRed, err, ColorReset))
 			return err
 		}
+		spinner.Stop("")
 
 		choice := resp.Choices[0]
 		assistantMsg := choice.Message
@@ -180,29 +260,43 @@ func runOpenRouterTurn(client *openrouter.Client, history *[]openrouter.Message,
 		}
 
 		if len(assistantMsg.ToolCalls) == 0 {
-			fmt.Printf("\n%s%s✓ Task completed!%s\n", ColorBold, ColorGreen, ColorReset)
+			fmt.Printf("\n%s%s✨ Task complete!%s\n", ColorBold, ColorGreen, ColorReset)
 			break
 		}
 
-		// Execute tools
+		// Execute tools with motion spinner
 		for _, tc := range assistantMsg.ToolCalls {
 			fn := tc.Function
-			fmt.Printf("\n%s%s⚡ [%s]:%s %s\n", ColorBold, ColorYellow, fn.Name, ColorReset, fn.Arguments)
+			emoji := getToolEmoji(fn.Name)
 
 			var args map[string]interface{}
 			_ = json.Unmarshal([]byte(fn.Arguments), &args)
 
+			// Live animated action message
+			actionDesc := fn.Arguments
+			if cmd, ok := args["command"].(string); ok {
+				actionDesc = cmd
+			} else if p, ok := args["path"].(string); ok {
+				actionDesc = p
+			}
+
+			toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, fn.Name, actionDesc))
+			toolSpinner.Start()
+
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
 			if toolErr != nil {
+				toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
 				output = fmt.Sprintf("Error: %v", toolErr)
-				fmt.Printf("%s✗ Error: %v%s\n", ColorRed, toolErr, ColorReset)
 			} else {
+				toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, fn.Name, ColorReset, actionDesc))
 				lines := strings.Split(output, "\n")
 				preview := output
-				if len(lines) > 5 {
-					preview = strings.Join(lines[:5], "\n") + fmt.Sprintf("\n... (+%d more lines)", len(lines)-5)
+				if len(lines) > 4 {
+					preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
 				}
-				fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+				if strings.TrimSpace(preview) != "" {
+					fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+				}
 			}
 
 			*history = append(*history, openrouter.Message{
@@ -240,10 +334,15 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 	for step := 1; step <= maxSteps; step++ {
 		req.Contents = *history
 
+		spinner := NewSpinner("🧠 Thinking & planning...")
+		spinner.Start()
+
 		resp, err := client.Generate(req)
 		if err != nil {
+			spinner.Stop(fmt.Sprintf("%s❌ Error: %v%s", ColorRed, err, ColorReset))
 			return err
 		}
+		spinner.Stop("")
 
 		candidate := resp.Candidates[0]
 		*history = append(*history, candidate.Content)
@@ -259,20 +358,32 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 			if part.FunctionCall != nil {
 				hasToolCalls = true
 				call := part.FunctionCall
+				emoji := getToolEmoji(call.Name)
 
-				fmt.Printf("\n%s%s⚡ [%s]:%s %v\n", ColorBold, ColorYellow, call.Name, ColorReset, call.Args)
+				actionDesc := fmt.Sprintf("%v", call.Args)
+				if cmd, ok := call.Args["command"].(string); ok {
+					actionDesc = cmd
+				} else if p, ok := call.Args["path"].(string); ok {
+					actionDesc = p
+				}
+
+				toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, call.Name, actionDesc))
+				toolSpinner.Start()
 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
 				if toolErr != nil {
+					toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
 					output = fmt.Sprintf("Error: %v", toolErr)
-					fmt.Printf("%s✗ Error: %v%s\n", ColorRed, toolErr, ColorReset)
 				} else {
+					toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, call.Name, ColorReset, actionDesc))
 					lines := strings.Split(output, "\n")
 					preview := output
-					if len(lines) > 5 {
-						preview = strings.Join(lines[:5], "\n") + fmt.Sprintf("\n... (+%d more lines)", len(lines)-5)
+					if len(lines) > 4 {
+						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
 					}
-					fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+					if strings.TrimSpace(preview) != "" {
+						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+					}
 				}
 
 				toolResponseParts = append(toolResponseParts, gemini.Part{
@@ -292,7 +403,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 				Parts: toolResponseParts,
 			})
 		} else {
-			fmt.Printf("\n%s%s✓ Task completed!%s\n", ColorBold, ColorGreen, ColorReset)
+			fmt.Printf("\n%s%s✨ Task complete!%s\n", ColorBold, ColorGreen, ColorReset)
 			break
 		}
 	}
@@ -325,7 +436,7 @@ func main() {
 	// Direct prompt execution (e.g. trtc "build an app")
 	if len(os.Args) > 1 {
 		userPrompt := strings.Join(os.Args[1:], " ")
-		fmt.Printf("\n%s%s🚀 Tertic Agent (%s - %s):%s %s\n\n", ColorBold, ColorCyan, cfg.Provider, cfg.Model, ColorReset, userPrompt)
+		fmt.Printf("\n%s%s🚀 Tertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
 		if cfg.Provider == "openrouter" {
 			if err := runOpenRouterTurn(orClient, &orHistory, userPrompt); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
@@ -340,12 +451,12 @@ func main() {
 
 	// Interactive Mode (e.g. trtc)
 	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sProvider:%s %s | %sModel:%s %s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model)
-	fmt.Printf("%sInteractive Mode%s (type your instructions or 'exit' to quit)\n\n", ColorBold, ColorReset)
+	fmt.Printf("%sLive Agent Session%s | %sModel:%s %s\n", ColorBold, ColorReset, ColorDim, ColorReset, cfg.Model)
+	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Printf("%s%strtc > %s", ColorBold, ColorGreen, ColorReset)
+		fmt.Printf("%s%strtc ❯%s ", ColorBold, ColorGreen, ColorReset)
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			break
@@ -356,7 +467,7 @@ func main() {
 			continue
 		}
 		if prompt == "exit" || prompt == "quit" {
-			fmt.Println("Goodbye!")
+			fmt.Printf("%s👋 Goodbye!%s\n", ColorCyan, ColorReset)
 			break
 		}
 
@@ -366,7 +477,7 @@ func main() {
 			}
 		} else {
 			if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
-				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n\n", ColorRed, err, ColorReset)
+				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
 			}
 		}
 		fmt.Println()
