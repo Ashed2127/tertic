@@ -40,7 +40,7 @@ mkdir -p "$HOME/bin"
 
 echo -e "${GREEN}[2/3] Downloading latest Tertic...${NC}"
 if [ -d "$INSTALL_DIR/.git" ]; then
-    (cd "$INSTALL_DIR" && git pull)
+    (cd "$INSTALL_DIR" && git reset --hard && git pull)
 else
     git clone https://github.com/Ashed2127/tertic.git "$INSTALL_DIR"
 fi
