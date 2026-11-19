@@ -66,7 +66,8 @@ func NewSpinner(msg string) *Spinner {
 		cleanMsg = cleanMsg[:57] + "..."
 	}
 	return &Spinner{
-		frames:  []string{"┳", "┫", "┻", "┣"},
+		// Moves along the path of a "T": left-bar -> center -> right-bar -> center -> down the stem -> back up
+		frames:  []string{"⠉  ", " ⠉ ", "  ⠉", " ⠉ ", " ⠒ ", " ⠤ ", " ⣀ ", " ⠤ ", " ⠒ "},
 		msg:     cleanMsg,
 		stop:    make(chan struct{}),
 		enabled: true,
@@ -90,7 +91,7 @@ func (s *Spinner) Start() {
 				frame := s.frames[i%len(s.frames)]
 				fmt.Printf("\r\033[2K%s%s%s %s%s%s", ColorCyan, frame, ColorReset, ColorDim, s.msg, ColorReset)
 				i++
-				time.Sleep(120 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 			}
 		}
 	}()
