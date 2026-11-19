@@ -66,8 +66,18 @@ func NewSpinner(msg string) *Spinner {
 		cleanMsg = cleanMsg[:57] + "..."
 	}
 	return &Spinner{
-		// Moves along the path of a "T": left-bar -> center -> right-bar -> center -> down the stem -> back up
-		frames:  []string{"⠉  ", " ⠉ ", "  ⠉", " ⠉ ", " ⠒ ", " ⠤ ", " ⣀ ", " ⠤ ", " ⠒ "},
+		// Bold "T" that glides and smoothly fades in and out from left to right
+		frames: []string{
+			"\033[38;5;238m\033[1mT\033[0m   ",
+			"\033[38;5;30m\033[1mT\033[0m   ",
+			" \033[38;5;37m\033[1mT\033[0m  ",
+			" \033[38;5;44m\033[1mT\033[0m  ",
+			"  \033[1m\033[97mT\033[0m ",
+			"  \033[38;5;51m\033[1mT\033[0m ",
+			"   \033[38;5;37m\033[1mT\033[0m",
+			"   \033[38;5;240m\033[1mT\033[0m",
+			"    ",
+		},
 		msg:     cleanMsg,
 		stop:    make(chan struct{}),
 		enabled: true,
@@ -89,7 +99,7 @@ func (s *Spinner) Start() {
 				return
 			default:
 				frame := s.frames[i%len(s.frames)]
-				fmt.Printf("\r\033[2K%s%s%s %s%s%s", ColorCyan, frame, ColorReset, ColorDim, s.msg, ColorReset)
+				fmt.Printf("\r\033[2K%s %s%s%s", frame, ColorDim, s.msg, ColorReset)
 				i++
 				time.Sleep(100 * time.Millisecond)
 			}
