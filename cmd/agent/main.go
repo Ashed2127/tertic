@@ -50,21 +50,33 @@ Do not output long numbered lists of hypothetical steps—directly run the neces
 
 // Motion Spinner
 type Spinner struct {
-	frames []string
-	msg    string
-	stop   chan struct{}
-	wg     sync.WaitGroup
+	frames  []string
+	msg     string
+	stop    chan struct{}
+	wg      sync.WaitGroup
+	enabled bool
 }
 
+var verboseProcess = false // When true, shows tool execution details & previews; when false, clean concise mode
+
 func NewSpinner(msg string) *Spinner {
+	// Clean frame when running inside Termux non-interactive / wrapped terminals
+	cleanMsg := msg
+	if len(cleanMsg) > 60 {
+		cleanMsg = cleanMsg[:57] + "..."
+	}
 	return &Spinner{
-		frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
-		msg:    msg,
-		stop:   make(chan struct{}),
+		frames:  []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		msg:     cleanMsg,
+		stop:    make(chan struct{}),
+		enabled: true,
 	}
 }
 
 func (s *Spinner) Start() {
+	if !s.enabled {
+		return
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -72,11 +84,11 @@ func (s *Spinner) Start() {
 		for {
 			select {
 			case <-s.stop:
-				fmt.Printf("\r\033[K")
+				fmt.Print("\r\033[2K")
 				return
 			default:
 				frame := s.frames[i%len(s.frames)]
-				fmt.Printf("\r%s%s%s %s%s%s", ColorCyan, frame, ColorReset, ColorDim, s.msg, ColorReset)
+				fmt.Printf("\r\033[2K%s%s%s %s%s%s", ColorCyan, frame, ColorReset, ColorDim, s.msg, ColorReset)
 				i++
 				time.Sleep(80 * time.Millisecond)
 			}
@@ -85,12 +97,15 @@ func (s *Spinner) Start() {
 }
 
 func (s *Spinner) Stop(finalMsg string) {
+	if !s.enabled {
+		return
+	}
 	close(s.stop)
 	s.wg.Wait()
 	if finalMsg != "" {
-		fmt.Printf("\r\033[K%s\n", finalMsg)
+		fmt.Printf("\r\033[2K%s\n", finalMsg)
 	} else {
-		fmt.Printf("\r\033[K")
+		fmt.Print("\r\033[2K")
 	}
 }
 
@@ -653,21 +668,27 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			}
 
 			toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, fn.Name, actionDesc))
-			toolSpinner.Start()
+			if verboseProcess {
+				toolSpinner.Start()
+			}
 
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
 			if toolErr != nil {
-				toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
+				if verboseProcess {
+					toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
+				}
 				output = fmt.Sprintf("Error: %v", toolErr)
 			} else {
-				toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, fn.Name, ColorReset, actionDesc))
-				lines := strings.Split(output, "\n")
-				preview := output
-				if len(lines) > 4 {
-					preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
-				}
-				if strings.TrimSpace(preview) != "" {
-					fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+				if verboseProcess {
+					toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, fn.Name, ColorReset, actionDesc))
+					lines := strings.Split(output, "\n")
+					preview := output
+					if len(lines) > 4 {
+						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
+					}
+					if strings.TrimSpace(preview) != "" {
+						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+					}
 				}
 			}
 
@@ -746,21 +767,27 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 				}
 
 				toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, call.Name, actionDesc))
-				toolSpinner.Start()
+				if verboseProcess {
+					toolSpinner.Start()
+				}
 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
 				if toolErr != nil {
-					toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
+					if verboseProcess {
+						toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
+					}
 					output = fmt.Sprintf("Error: %v", toolErr)
 				} else {
-					toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, call.Name, ColorReset, actionDesc))
-					lines := strings.Split(output, "\n")
-					preview := output
-					if len(lines) > 4 {
-						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
-					}
-					if strings.TrimSpace(preview) != "" {
-						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+					if verboseProcess {
+						toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, call.Name, ColorReset, actionDesc))
+						lines := strings.Split(output, "\n")
+						preview := output
+						if len(lines) > 4 {
+							preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
+						}
+						if strings.TrimSpace(preview) != "" {
+							fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+						}
 					}
 				}
 
@@ -842,7 +869,7 @@ func main() {
 	}
 
 	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(Type /model to switch)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
+	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(/model to switch | /process to toggle)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
 	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -865,6 +892,16 @@ func main() {
 		if prompt == "/model" || prompt == "/models" {
 			switchModelInteractive(cfg)
 			initClients()
+			continue
+		}
+
+		if prompt == "/process" || prompt == "/verbose" {
+			verboseProcess = !verboseProcess
+			if verboseProcess {
+				fmt.Printf("%s[Process Details: ON]%s Raw step-by-step tool output is now visible.\n\n", ColorGreen, ColorReset)
+			} else {
+				fmt.Printf("%s[Process Details: OFF]%s Clean mode active (hidden tool noise, like Devin/Antigravity).\n\n", ColorYellow, ColorReset)
+			}
 			continue
 		}
 
