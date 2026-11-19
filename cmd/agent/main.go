@@ -66,16 +66,24 @@ func NewSpinner(msg string) *Spinner {
 		cleanMsg = cleanMsg[:57] + "..."
 	}
 	return &Spinner{
-		// Bold "T" that glides and smoothly fades in and out from left to right
+		// Fluid sine-wave Bold "T" with high-definition RGB easing from left to right
 		frames: []string{
-			"\033[38;5;238m\033[1mT\033[0m   ",
-			"\033[38;5;30m\033[1mT\033[0m   ",
-			" \033[38;5;37m\033[1mT\033[0m  ",
-			" \033[38;5;44m\033[1mT\033[0m  ",
-			"  \033[1m\033[97mT\033[0m ",
-			"  \033[38;5;51m\033[1mT\033[0m ",
-			"   \033[38;5;37m\033[1mT\033[0m",
-			"   \033[38;5;240m\033[1mT\033[0m",
+			"\033[38;2;15;45;60m\033[1mT\033[0m   ",
+			"\033[38;2;54;85;98m\033[1mT\033[0m   ",
+			"\033[38;2;93;125;134m\033[1mT\033[0m   ",
+			"\033[38;2;128;161;168m\033[1mT\033[0m   ",
+			"\033[38;2;159;193;197m\033[1mT\033[0m   ",
+			" \033[38;2;185;219;222m\033[1mT\033[0m  ",
+			" \033[38;2;204;239;240m\033[1mT\033[0m  ",
+			" \033[38;2;216;250;251m\033[1mT\033[0m  ",
+			"  \033[38;2;220;255;255m\033[1mT\033[0m ",
+			"  \033[38;2;216;250;251m\033[1mT\033[0m ",
+			"  \033[38;2;204;239;240m\033[1mT\033[0m ",
+			"  \033[38;2;185;219;222m\033[1mT\033[0m ",
+			"   \033[38;2;159;193;197m\033[1mT\033[0m",
+			"   \033[38;2;128;161;168m\033[1mT\033[0m",
+			"   \033[38;2;93;125;134m\033[1mT\033[0m",
+			"   \033[38;2;54;85;98m\033[1mT\033[0m",
 			"    ",
 		},
 		msg:     cleanMsg,
@@ -101,7 +109,7 @@ func (s *Spinner) Start() {
 				frame := s.frames[i%len(s.frames)]
 				fmt.Printf("\r\033[2K%s %s%s%s", frame, ColorDim, s.msg, ColorReset)
 				i++
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(55 * time.Millisecond)
 			}
 		}
 	}()
