@@ -6,39 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Ashed2127/tertic/internal/harness"
 	"github.com/Ashed2127/tertic/internal/model"
 	"github.com/Ashed2127/tertic/internal/task"
-	"github.com/Ashed2127/tertic/internal/tools"
 )
 
-// Agent defines the interface for specialized autonomous agents
-type Agent interface {
-	Name() string
-	Role() string
-	Description() string
-	Instructions() string
-	AllowedTools() []string
-	Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error)
-}
-
-// Result is the outcome of an agent's execution
-type Result struct {
-	Summary   string            `json:"summary"`
-	Data      interface{}       `json:"data,omitempty"`
-	NextTasks []*task.Task      `json:"next_tasks,omitempty"`
-	Passed    bool              `json:"passed"`
-	Feedback  string            `json:"feedback,omitempty"`
-}
-
-// Harness exposes execution services and resources to agents
-type Harness interface {
-	GetModelProvider(agentName string) (model.Provider, error)
-	ExecuteTool(agentName, toolName string, args map[string]interface{}) (string, error)
-	GetSharedContext() map[string]interface{}
-	SetSharedContext(key string, val interface{})
-	GetToolDefinitions(toolNames []string) []tools.ToolDefinition
-	NotifyProgress(agentName, status string)
-}
+// Re-export standard agent interfaces and types from harness
+type Agent = harness.Agent
+type Result = harness.Result
+type Harness = harness.Harness
 
 // BaseAgent contains common attributes
 type BaseAgent struct {
@@ -73,14 +49,20 @@ func NewCoordinatorAgent() *CoordinatorAgent {
 
 func (a *CoordinatorAgent) Instructions() string {
 	return `You are the Coordinator Agent in the Tertic multi-agent software engineering system on Android.
-Your job is to understand the overall user objective, determine task complexity, coordinate specialized agents, and evaluate final outcomes.
+You own the high-level goal, decide task complexity, coordinate specialized agents, and produce the final verified report.
+
+CORE PRINCIPLES:
+- Verification over claims: Never accept a task as done without verification proof.
+- Action over narration: Be decisive, direct, and token-efficient.
+- Escalate to the user only when blocked by missing credentials or irreversible decisions.
+
 When analyzing a user request:
-- If it's a simple greeting or question, answer directly.
-- If it requires coding, breakdown the goals and ensure the developer and reviewer execute the plan thoroughly.`
+- If conversational or a question, answer directly and concisely.
+- If it requires software work, formulate the objective and ensure the planner, researcher, developer, and reviewer execute the plan thoroughly.`
 }
 
 func (a *CoordinatorAgent) Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error) {
-	h.NotifyProgress(a.Role(), "Evaluating objective & integrating work...")
+	h.NotifyProgress(a.Role(), "Evaluating objective...")
 	p, err := h.GetModelProvider(a.Name())
 	if err != nil {
 		return nil, err
@@ -89,10 +71,21 @@ func (a *CoordinatorAgent) Execute(ctx context.Context, h Harness, input string,
 	systemMsg := model.Message{Role: "system", Content: a.Instructions()}
 	userMsg := model.Message{Role: "user", Content: input}
 
-	resp, err := p.Generate(ctx, []model.Message{systemMsg, userMsg}, nil, model.ModelOptions{Temperature: 0.2})
+	var messages []model.Message
+	messages = append(messages, systemMsg)
+	// Inject past multi-turn history so the agent never forgets previous steps or user instructions
+	if hist := h.GetSharedHistory(); len(hist) > 0 {
+		messages = append(messages, hist...)
+	}
+	messages = append(messages, userMsg)
+
+	resp, err := p.Generate(ctx, messages, nil, model.ModelOptions{Temperature: 0.2})
 	if err != nil {
 		return nil, err
 	}
+
+	// Persist to shared conversation history
+	h.AppendSharedHistory(userMsg, model.Message{Role: "assistant", Content: resp.Content})
 
 	return &Result{
 		Summary: resp.Content,
@@ -120,22 +113,24 @@ func NewPlannerAgent() *PlannerAgent {
 
 func (a *PlannerAgent) Instructions() string {
 	return `You are the Planner Agent in Tertic.
-Break complex coding objectives into a minimal, sequential list of atomic tasks for Developer and Reviewer agents.
+Break complex coding objectives into minimal, sequential, dependency-aware tasks with measurable acceptance criteria.
+Keep plans short (prefer <= 8 tasks for normal requests).
+
 You MUST output ONLY a valid JSON array of tasks in this schema:
 [
   {
     "task_id": "task_001",
     "assigned_agent": "developer",
-    "objective": "Brief description of work",
+    "objective": "Brief description of atomic work",
     "dependencies": [],
-    "acceptance_criteria": ["Criteria 1", "Criteria 2"]
+    "acceptance_criteria": ["Explicit testable criteria 1", "Explicit testable criteria 2"]
   }
 ]
 Do not wrap in markdown or backticks if possible, return raw parseable JSON.`
 }
 
 func (a *PlannerAgent) Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error) {
-	h.NotifyProgress(a.Role(), "Creating structured execution plan...")
+	h.NotifyProgress(a.Role(), "Planning...")
 	p, err := h.GetModelProvider(a.Name())
 	if err != nil {
 		return nil, err
@@ -201,12 +196,12 @@ func NewResearcherAgent() *ResearcherAgent {
 
 func (a *ResearcherAgent) Instructions() string {
 	return `You are the Researcher Agent in Tertic.
-Your task is to inspect directories and read relevant project files using available read_file and list_dir tools.
-Provide concise architectural insights, library details, and patterns to the Developer agent.`
+Gather only the architectural, file-level, and dependency context the Developer actually needs.
+Be extremely selective and token-efficient. Use read_file and list_dir tools to inspect key files without dumping full file content.`
 }
 
 func (a *ResearcherAgent) Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error) {
-	h.NotifyProgress(a.Role(), "Inspecting project context...")
+	h.NotifyProgress(a.Role(), "Researching...")
 	p, err := h.GetModelProvider(a.Name())
 	if err != nil {
 		return nil, err
@@ -262,9 +257,13 @@ func NewDeveloperAgent() *DeveloperAgent {
 
 func (a *DeveloperAgent) Instructions() string {
 	return `You are the Developer Agent in Tertic.
-You write, refactor, and test working code on Android/Termux.
-When assigned a task, invoke tools (write_file, edit_file, execute_bash) directly to deliver the solution.
-Verify that created code compiles and runs.`
+Your mission is to implement software solutions on Android/Termux that demonstrably meet acceptance criteria.
+
+CORE BEHAVIOR:
+- ReAct + Reflect loop: Observe -> Think -> Act -> Reflect.
+- Smallest viable change: Prefer precise edit_file over rewriting entire files.
+- Verification over claims: Always compile, run tests, or execute checks before finishing.
+- Never leave broken intermediate states. Prefer simple, maintainable solutions.`
 }
 
 func (a *DeveloperAgent) Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error) {
@@ -273,7 +272,7 @@ func (a *DeveloperAgent) Execute(ctx context.Context, h Harness, input string, c
 		taskDesc = fmt.Sprintf("Task [%s]: %s\nAcceptance Criteria: %v", currentTask.TaskID, currentTask.Objective, currentTask.AcceptanceCriteria)
 	}
 
-	h.NotifyProgress(a.Role(), "Implementing task...")
+	h.NotifyProgress(a.Role(), "Writing code...")
 	p, err := h.GetModelProvider(a.Name())
 	if err != nil {
 		return nil, err
@@ -282,8 +281,12 @@ func (a *DeveloperAgent) Execute(ctx context.Context, h Harness, input string, c
 	toolDefs := h.GetToolDefinitions(a.AllowedTools())
 	messages := []model.Message{
 		{Role: "system", Content: a.Instructions()},
-		{Role: "user", Content: taskDesc},
 	}
+	// Inject past multi-turn context so developer remembers previous changes & files
+	if hist := h.GetSharedHistory(); len(hist) > 0 {
+		messages = append(messages, hist...)
+	}
+	messages = append(messages, model.Message{Role: "user", Content: taskDesc})
 
 	maxSteps := 10
 	var finalSummary string
@@ -315,6 +318,10 @@ func (a *DeveloperAgent) Execute(ctx context.Context, h Harness, input string, c
 		}
 	}
 
+	if finalSummary != "" {
+		h.AppendSharedHistory(model.Message{Role: "assistant", Content: fmt.Sprintf("[%s]: %s", a.Role(), finalSummary)})
+	}
+
 	return &Result{
 		Summary: finalSummary,
 		Passed:  true,
@@ -341,13 +348,14 @@ func NewReviewerAgent() *ReviewerAgent {
 
 func (a *ReviewerAgent) Instructions() string {
 	return `You are the Reviewer Agent in Tertic.
-Audit the work against acceptance criteria. Read generated files and optionally run bash verification tests.
-Decide if the task passed or failed.
-If issues exist, provide actionable feedback for the Developer agent.`
+Audit implementations ruthlessly against acceptance criteria.
+Demand concrete proof (compiler/test status, file verification).
+If tests fail or criteria are not satisfied, produce concise, actionable feedback for the Developer.
+Never give vague criticism.`
 }
 
 func (a *ReviewerAgent) Execute(ctx context.Context, h Harness, input string, currentTask *task.Task) (*Result, error) {
-	h.NotifyProgress(a.Role(), "Reviewing changes & verifying criteria...")
+	h.NotifyProgress(a.Role(), "Verifying...")
 	p, err := h.GetModelProvider(a.Name())
 	if err != nil {
 		return nil, err

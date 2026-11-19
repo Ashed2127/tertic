@@ -46,17 +46,31 @@ const Banner = `
  Autonomous AI Coding Agent for Termux
 `
 
-const SystemPrompt = `You are Tertic, an autonomous AI software engineering agent running directly inside Termux on Android.
-Your job is to act like Devin or Antigravity: directly execute tasks without narrating or dumping an exhaustive list of every step upfront. Take initiative, invoke tool actions immediately, and provide concise, high-level summaries upon completion.
+const SystemPrompt = `You are Tertic, an elite autonomous software engineering agent running natively inside Termux on Android. You operate as a tightly coordinated multi-agent system (Coordinator → Planner → Researcher → Developer → Reviewer). Your sole mission is to deliver working, verified software with maximum reliability and minimum wasted steps.
 
-When the user greets you or asks conversational questions (e.g. "hey", "hello", "what can you do?"), reply with normal conversational text.
-Do not output long numbered lists of hypothetical steps—directly run the necessary bash commands, create/edit files, test, and deliver the result.`
+CORE PRINCIPLES (NON-NEGOTIABLE)
+1. Verification over claims — Never claim a task is done until you have actually run the relevant check (compile, test, lint, or execute).
+2. Action over narration — Call tools immediately. Avoid long explanations of what you will do.
+3. Smallest viable change — Prefer precise edits over rewriting large files.
+4. Token efficiency — Mobile context is precious. Be extremely concise. Summarize aggressively.
+5. Self-correction — When something fails, diagnose root cause, apply the smallest fix, and re-verify. Do not loop blindly.
+
+REASONING PROTOCOL (ReAct + Reflect)
+For every non-trivial task:
+1. OBSERVE: State current state + relevant facts in 1–3 sentences max.
+2. THINK: Decide the single highest-leverage next action.
+3. ACT: Call the necessary tools.
+4. REFLECT: Evaluate progress against acceptance criteria. Update plan if needed.
+
+When the user greets you or asks conversational questions, reply with normal concise text.
+Do not output long hypothetical step lists upfront—directly invoke the necessary tools, verify, and deliver working code.`
 
 // Motion Spinner
 type Spinner struct {
 	frames  []string
 	msg     string
 	stop    chan struct{}
+	mu      sync.Mutex
 	wg      sync.WaitGroup
 	enabled bool
 }
@@ -64,7 +78,6 @@ type Spinner struct {
 var verboseProcess = false // When true, shows tool execution details & previews; when false, clean concise mode
 
 func NewSpinner(msg string) *Spinner {
-	// Clean frame when running inside Termux non-interactive / wrapped terminals
 	cleanMsg := msg
 	if len(cleanMsg) > 60 {
 		cleanMsg = cleanMsg[:57] + "..."
@@ -110,10 +123,13 @@ func (s *Spinner) Start() {
 				fmt.Print("\r\033[2K")
 				return
 			default:
+				s.mu.Lock()
+				m := s.msg
+				s.mu.Unlock()
 				frame := s.frames[i%len(s.frames)]
-				fmt.Printf("\r\033[2K%s %s%s%s", frame, ColorDim, s.msg, ColorReset)
+				fmt.Printf("\r\033[2K%s \033[38;2;140;185;200m%s\033[0m", frame, m)
 				i++
-				time.Sleep(55 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 			}
 		}
 	}()
@@ -128,7 +144,70 @@ func (s *Spinner) Stop(finalMsg string) {
 	if finalMsg != "" {
 		fmt.Printf("\r\033[2K%s\n", finalMsg)
 	} else {
+		// Clean fade-out motion on complete
+		s.mu.Lock()
+		oldMsg := s.msg
+		s.mu.Unlock()
+		fadeSteps := []int{160, 100, 40}
+		for _, v := range fadeSteps {
+			fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v/2, v/2, v, v, v, oldMsg, ColorReset)
+			time.Sleep(14 * time.Millisecond)
+		}
 		fmt.Print("\r\033[2K")
+	}
+}
+
+func (s *Spinner) StopSuccess(msg string) {
+	s.Stop(fmt.Sprintf("%s✔%s %s%s%s", ColorGreen, ColorReset, ColorBold, msg, ColorReset))
+}
+
+func (s *Spinner) StopFailure(msg string) {
+	s.Stop(fmt.Sprintf("%s✖%s %s%s%s", ColorRed, ColorReset, ColorBold, msg, ColorReset))
+}
+
+func (s *Spinner) UpdateMessage(newMsg string) {
+	if !s.enabled {
+		return
+	}
+	cleanMsg := newMsg
+	if len(cleanMsg) > 60 {
+		cleanMsg = cleanMsg[:57] + "..."
+	}
+	s.mu.Lock()
+	s.msg = cleanMsg
+	s.mu.Unlock()
+}
+
+// TransitionTo smoothly transitions the spinner message with a fluid fade-out/fade-in wave
+func (s *Spinner) TransitionTo(newMsg string) {
+	if !s.enabled {
+		return
+	}
+	cleanMsg := newMsg
+	if len(cleanMsg) > 60 {
+		cleanMsg = cleanMsg[:57] + "..."
+	}
+
+	s.mu.Lock()
+	oldMsg := s.msg
+	s.mu.Unlock()
+
+	// Smoothly fade-out previous step text
+	fadeSteps := []int{180, 120, 60, 10}
+	for _, v := range fadeSteps {
+		fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v/2, v/2, v, v, v, oldMsg, ColorReset)
+		time.Sleep(16 * time.Millisecond)
+	}
+
+	s.mu.Lock()
+	s.msg = cleanMsg
+	s.mu.Unlock()
+
+	// Smoothly fade-in new step text
+	fadeUpSteps := []int{20, 80, 140, 210}
+	for _, v := range fadeUpSteps {
+		fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v, v, v, v, v, cleanMsg, ColorReset)
+		time.Sleep(16 * time.Millisecond)
 	}
 }
 
@@ -595,23 +674,23 @@ func formatActionMessage(name string, args map[string]interface{}) string {
 		return "Executing command..."
 	case "write_file":
 		if path != "" {
-			return fmt.Sprintf("Implementing %s...", path)
+			return fmt.Sprintf("Writing %s...", path)
 		}
-		return "Implementing code..."
+		return "Writing code..."
 	case "edit_file":
 		if path != "" {
-			return fmt.Sprintf("Refactoring %s...", path)
+			return fmt.Sprintf("Editing %s...", path)
 		}
 		return "Refactoring code..."
 	case "read_file":
 		if path != "" {
-			return fmt.Sprintf("Analyzing %s...", path)
+			return fmt.Sprintf("Reading %s...", path)
 		}
-		return "Analyzing code..."
+		return "Reading code..."
 	case "list_dir":
-		return "Inspecting directory..."
+		return "Inspecting files..."
 	default:
-		return "Executing task..."
+		return "Processing..."
 	}
 }
 
@@ -758,7 +837,7 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				if verboseProcess {
 					toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
 				} else {
-					toolSpinner.Stop("")
+					toolSpinner.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 				}
 				output = fmt.Sprintf("Error: %v", toolErr)
 			} else {
@@ -773,7 +852,7 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
 					}
 				} else {
-					toolSpinner.Stop("")
+					toolSpinner.StopSuccess(taskLabel)
 				}
 			}
 
@@ -859,7 +938,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 					if verboseProcess {
 						toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
 					} else {
-						toolSpinner.Stop("")
+						toolSpinner.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 					}
 					output = fmt.Sprintf("Error: %v", toolErr)
 				} else {
@@ -874,7 +953,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 							fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
 						}
 					} else {
-						toolSpinner.Stop("")
+						toolSpinner.StopSuccess(taskLabel)
 					}
 				}
 
@@ -939,6 +1018,8 @@ func main() {
 	var multiAgentEngine *orchestrator.Engine
 	modelReg := model.NewRegistry()
 
+	var stopMultiAgentProgress func(finalMsg string)
+
 	initClients := func() {
 		chatClient = nil
 		chatHistory = nil
@@ -972,13 +1053,33 @@ func main() {
 			modelReg.Register(ag.Name(), primaryProvider)
 		}
 
+		var activeProgressSpinner *Spinner
+		var activeProgressMu sync.Mutex
+
 		multiAgentEngine = orchestrator.NewEngine(agentReg, modelReg, orchestrator.Config{
 			MaxConcurrentAgents: 1, // Sequential execution for low-RAM Android/Termux
 			SequentialOnly:      true,
 			OnProgress: func(role, status string) {
-				fmt.Printf("%s[%s]%s %s\n", ColorCyan, role, ColorReset, status)
+				activeProgressMu.Lock()
+				defer activeProgressMu.Unlock()
+				msg := fmt.Sprintf("[%s] %s", role, status)
+				if activeProgressSpinner == nil {
+					activeProgressSpinner = NewSpinner(msg)
+					activeProgressSpinner.Start()
+				} else {
+					activeProgressSpinner.TransitionTo(msg)
+				}
 			},
 		})
+
+		stopMultiAgentProgress = func(finalMsg string) {
+			activeProgressMu.Lock()
+			defer activeProgressMu.Unlock()
+			if activeProgressSpinner != nil {
+				activeProgressSpinner.Stop(finalMsg)
+				activeProgressSpinner = nil
+			}
+		}
 	}
 
 	initClients()
@@ -1039,8 +1140,10 @@ func main() {
 			defer cancel()
 			out, err := multiAgentEngine.ExecuteWorkflow(ctx, userPrompt)
 			if err != nil {
+				stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", ColorRed, ColorReset, ColorBold, ColorReset))
 				fmt.Fprintf(os.Stderr, "\n%sWorkflow Error: %v%s\n", ColorRed, err, ColorReset)
 			} else {
+				stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", ColorGreen, ColorReset, ColorBold, ColorReset))
 				fmt.Println()
 				printStreamed(out)
 			}
@@ -1112,8 +1215,10 @@ func main() {
 			out, err := multiAgentEngine.ExecuteWorkflow(ctx, prompt)
 			cancel()
 			if err != nil {
+				stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", ColorRed, ColorReset, ColorBold, ColorReset))
 				fmt.Fprintf(os.Stderr, "%sWorkflow Error: %v%s\n\n", ColorRed, err, ColorReset)
 			} else {
+				stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", ColorGreen, ColorReset, ColorBold, ColorReset))
 				fmt.Println()
 				printStreamed(out)
 			}

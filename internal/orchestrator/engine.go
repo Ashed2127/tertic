@@ -7,10 +7,14 @@ import (
 	"time"
 
 	"github.com/Ashed2127/tertic/internal/agent"
+	"github.com/Ashed2127/tertic/internal/harness"
 	"github.com/Ashed2127/tertic/internal/model"
 	"github.com/Ashed2127/tertic/internal/task"
 	"github.com/Ashed2127/tertic/internal/tools"
 )
+
+// Ensure Engine explicitly satisfies the standard harness.Harness interface
+var _ harness.Harness = (*Engine)(nil)
 
 // ProgressCallback receives updates when an agent makes progress
 type ProgressCallback func(agentRole, message string)
@@ -57,6 +61,36 @@ func NewEngine(agentReg *agent.Registry, modelReg *model.Registry, cfg Config) *
 // Harness implementation
 func (e *Engine) GetModelProvider(agentName string) (model.Provider, error) {
 	return e.modelRegistry.Get(agentName)
+}
+
+func (e *Engine) GetSharedHistory() []model.Message {
+	e.contextMu.RLock()
+	defer e.contextMu.RUnlock()
+	if raw, ok := e.sharedContext["_conversation_history"]; ok {
+		if history, ok := raw.([]model.Message); ok {
+			copied := make([]model.Message, len(history))
+			copy(copied, history)
+			return copied
+		}
+	}
+	return nil
+}
+
+func (e *Engine) AppendSharedHistory(msgs ...model.Message) {
+	e.contextMu.Lock()
+	defer e.contextMu.Unlock()
+	var history []model.Message
+	if raw, ok := e.sharedContext["_conversation_history"]; ok {
+		if h, ok := raw.([]model.Message); ok {
+			history = h
+		}
+	}
+	history = append(history, msgs...)
+	// Keep history bounded to avoid OOM on mobile
+	if len(history) > 40 {
+		history = history[len(history)-40:]
+	}
+	e.sharedContext["_conversation_history"] = history
 }
 
 func (e *Engine) ExecuteTool(agentName, toolName string, args map[string]interface{}) (string, error) {
@@ -196,7 +230,7 @@ func (e *Engine) ExecuteWorkflow(ctx context.Context, userObjective string) (str
 		if revErr == nil && !reviewRes.Passed && t.RetryCount < t.MaxRetries {
 			// Failed acceptance criteria: return to developer with reviewer feedback
 			t.RetryCount++
-			e.NotifyProgress("Reviewer", fmt.Sprintf("Requested revision: %s", reviewRes.Feedback))
+			e.NotifyProgress("Reviewer", fmt.Sprintf("Revising (%s)", reviewRes.Feedback))
 			t.Objective = fmt.Sprintf("%s\nReviewer feedback: %s", t.Objective, reviewRes.Feedback)
 			e.taskQueue.UpdateStatus(t.TaskID, task.StatusPending, "", reviewRes.Feedback)
 			continue
@@ -206,7 +240,7 @@ func (e *Engine) ExecuteWorkflow(ctx context.Context, userObjective string) (str
 	}
 
 	// 6. Coordinator final verification
-	e.NotifyProgress("Coordinator", "Verifying final acceptance criteria...")
+	e.NotifyProgress("Coordinator", "Finalizing...")
 	var finalReport string
 	if e.taskQueue.AllCompleted() {
 		finalReport = fmt.Sprintf("Successfully completed all planned tasks for: %s", userObjective)
