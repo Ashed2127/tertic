@@ -339,7 +339,7 @@ func resolveConfig() (*AgentConfig, error) {
 	chosenModel := ollama.AvailableLocalModels[selectedModelIdx]
 
 	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorCyan, ColorReset)
-	fmt.Printf("%s🚀 Selected Local Model:%s %s%s%s (%s)\n", ColorBold, ColorReset, ColorGreen, chosenModel.ID, ColorReset, chosenModel.Size)
+	fmt.Printf("%sSelected Local Model:%s %s%s%s (%s)\n", ColorBold, ColorReset, ColorGreen, chosenModel.ID, ColorReset, chosenModel.Size)
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorCyan, ColorReset)
 
 	if _, err := exec.LookPath("ollama"); err != nil {
@@ -352,18 +352,18 @@ func resolveConfig() (*AgentConfig, error) {
 
 	ollama.EnsureOllamaRunning()
 
-	pullSpinner := NewSpinner(fmt.Sprintf("📥 Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
+	pullSpinner := NewSpinner(fmt.Sprintf("Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
 	pullSpinner.Start()
 	pullCmd := exec.Command("ollama", "pull", chosenModel.ID)
 	_ = pullCmd.Run()
-	pullSpinner.Stop(fmt.Sprintf("%s✓ %s successfully downloaded and ready!%s", ColorGreen, chosenModel.ID, ColorReset))
+	pullSpinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosenModel.ID, ColorReset))
 
 	if configFile != "" {
 		_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"ollama\"\nexport OLLAMA_MODEL=\"%s\"\nexport OLLAMA_HOST=\"%s\"\n", chosenModel.ID, ollama.DefaultHost)), 0600)
 	}
 
 	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
-	fmt.Printf("%s✨ Setup Complete! Ask Tertic anything below to begin coding.%s\n", ColorBold, ColorReset)
+	fmt.Printf("%sSetup Complete! Ask Tertic anything below to begin coding.%s\n", ColorBold, ColorReset)
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
 
 	return &AgentConfig{
@@ -444,13 +444,13 @@ func switchModelInteractive(cfg *AgentConfig) {
 			idx := selectInteractive("Choose Model to Pull & Use (Use ↑/↓ arrows & Enter):", opts)
 			chosen := ollama.AvailableLocalModels[idx].ID
 
-			spinner := NewSpinner("📥 Pulling model: " + chosen)
+			spinner := NewSpinner("Pulling model: " + chosen)
 			spinner.Start()
 			_ = exec.Command("ollama", "pull", chosen).Run()
-			spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
+			spinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosen, ColorReset))
 			cfg.Model = chosen
 		} else {
-			opts := append(models, "➕ Download another model...")
+			opts := append(models, "+ Download another model...")
 			idx := selectInteractive("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
 
 			if idx == len(models) {
@@ -461,10 +461,10 @@ func switchModelInteractive(cfg *AgentConfig) {
 				newIdx := selectInteractive("Select Model to Download:", newOpts)
 				chosen := ollama.AvailableLocalModels[newIdx].ID
 
-				spinner := NewSpinner("📥 Pulling model: " + chosen)
+				spinner := NewSpinner("Pulling model: " + chosen)
 				spinner.Start()
 				_ = exec.Command("ollama", "pull", chosen).Run()
-				spinner.Stop(fmt.Sprintf("%s✓ Model %s ready!%s", ColorGreen, chosen, ColorReset))
+				spinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosen, ColorReset))
 				cfg.Model = chosen
 			} else {
 				parts := strings.Fields(models[idx])
@@ -511,25 +511,8 @@ func switchModelInteractive(cfg *AgentConfig) {
 	}
 
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
-	fmt.Printf("%s✓ Active Mode:%s %s%s%s | %sModel:%s %s%s%s\n", ColorBold, ColorReset, ColorYellow, cfg.Provider, ColorReset, ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
+	fmt.Printf("%sActive Mode:%s %s%s%s | %sModel:%s %s%s%s\n", ColorBold, ColorReset, ColorYellow, cfg.Provider, ColorReset, ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
-}
-
-func getToolEmoji(name string) string {
-	switch name {
-	case "execute_bash":
-		return "💻"
-	case "write_file":
-		return "📝"
-	case "read_file":
-		return "🔍"
-	case "edit_file":
-		return "✂️"
-	case "list_dir":
-		return "📂"
-	default:
-		return "⚡"
-	}
 }
 
 func isCodingTask(prompt string) bool {
@@ -618,12 +601,12 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			Tools:    openRouterTools,
 		}
 
-		spinner := NewSpinner("🧠 Thinking & planning...")
+		spinner := NewSpinner("Thinking & planning...")
 		spinner.Start()
 
 		resp, err := client.Chat(req)
 		if err != nil {
-			spinner.Stop(fmt.Sprintf("%s❌ Error: %v%s", ColorRed, err, ColorReset))
+			spinner.Stop(fmt.Sprintf("%sError: %v%s", ColorRed, err, ColorReset))
 			return err
 		}
 		spinner.Stop("")
@@ -651,7 +634,6 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 
 		for _, tc := range assistantMsg.ToolCalls {
 			fn := tc.Function
-			emoji := getToolEmoji(fn.Name)
 
 			var args map[string]interface{}
 			if isRawTool && rawArgs != nil {
@@ -667,7 +649,7 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				actionDesc = p
 			}
 
-			toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, fn.Name, actionDesc))
+			toolSpinner := NewSpinner(fmt.Sprintf("Running %s: %s", fn.Name, actionDesc))
 			if verboseProcess {
 				toolSpinner.Start()
 			}
@@ -675,12 +657,12 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
 			if toolErr != nil {
 				if verboseProcess {
-					toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
+					toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
 				}
 				output = fmt.Sprintf("Error: %v", toolErr)
 			} else {
 				if verboseProcess {
-					toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, fn.Name, ColorReset, actionDesc))
+					toolSpinner.Stop(fmt.Sprintf("%s%s [%s]:%s %s", ColorBold, ColorGreen, fn.Name, ColorReset, actionDesc))
 					lines := strings.Split(output, "\n")
 					preview := output
 					if len(lines) > 4 {
@@ -733,12 +715,12 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 	for step := 1; step <= maxSteps; step++ {
 		req.Contents = *history
 
-		spinner := NewSpinner("🧠 Thinking & planning...")
+		spinner := NewSpinner("Thinking & planning...")
 		spinner.Start()
 
 		resp, err := client.Generate(req)
 		if err != nil {
-			spinner.Stop(fmt.Sprintf("%s❌ Error: %v%s", ColorRed, err, ColorReset))
+			spinner.Stop(fmt.Sprintf("%sError: %v%s", ColorRed, err, ColorReset))
 			return err
 		}
 		spinner.Stop("")
@@ -757,7 +739,6 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 			if part.FunctionCall != nil {
 				hasToolCalls = true
 				call := part.FunctionCall
-				emoji := getToolEmoji(call.Name)
 
 				actionDesc := fmt.Sprintf("%v", call.Args)
 				if cmd, ok := call.Args["command"].(string); ok {
@@ -766,7 +747,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 					actionDesc = p
 				}
 
-				toolSpinner := NewSpinner(fmt.Sprintf("%s Running %s: %s", emoji, call.Name, actionDesc))
+				toolSpinner := NewSpinner(fmt.Sprintf("Running %s: %s", call.Name, actionDesc))
 				if verboseProcess {
 					toolSpinner.Start()
 				}
@@ -774,12 +755,12 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
 				if toolErr != nil {
 					if verboseProcess {
-						toolSpinner.Stop(fmt.Sprintf("%s❌ [%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
+						toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
 					}
 					output = fmt.Sprintf("Error: %v", toolErr)
 				} else {
 					if verboseProcess {
-						toolSpinner.Stop(fmt.Sprintf("%s%s %s [%s]:%s %s", ColorBold, ColorGreen, emoji, call.Name, ColorReset, actionDesc))
+						toolSpinner.Stop(fmt.Sprintf("%s%s [%s]:%s %s", ColorBold, ColorGreen, call.Name, ColorReset, actionDesc))
 						lines := strings.Split(output, "\n")
 						preview := output
 						if len(lines) > 4 {
@@ -855,7 +836,7 @@ func main() {
 
 	if len(os.Args) > 1 {
 		userPrompt := strings.Join(os.Args[1:], " ")
-		fmt.Printf("\n%s%s🚀 Tertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
+		fmt.Printf("\n%s%sTertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
 		if gemClient != nil {
 			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
@@ -885,7 +866,7 @@ func main() {
 			continue
 		}
 		if prompt == "exit" || prompt == "quit" {
-			fmt.Printf("%s👋 Goodbye!%s\n", ColorCyan, ColorReset)
+			fmt.Printf("%sGoodbye!%s\n", ColorCyan, ColorReset)
 			break
 		}
 
