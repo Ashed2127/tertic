@@ -558,6 +558,59 @@ func printStreamed(text string) {
 	fmt.Println()
 }
 
+func formatActionMessage(name string, args map[string]interface{}) string {
+	cmd := ""
+	if c, ok := args["command"].(string); ok {
+		cmd = strings.ToLower(c)
+	}
+	path := ""
+	if p, ok := args["path"].(string); ok {
+		path = filepath.Base(p)
+	}
+
+	switch name {
+	case "execute_bash":
+		if strings.Contains(cmd, "install") || strings.Contains(cmd, "npm i") || strings.Contains(cmd, "pip i") || strings.Contains(cmd, "pkg in") || strings.Contains(cmd, "apt in") || strings.Contains(cmd, "go get") {
+			return "Installing packages..."
+		}
+		if strings.Contains(cmd, "am start") || strings.Contains(cmd, "termux-open") || strings.Contains(cmd, "xdg-open") || strings.Contains(cmd, "open ") {
+			return "Opening application..."
+		}
+		if strings.Contains(cmd, "mkdir") || strings.Contains(cmd, " mv ") || strings.Contains(cmd, " cp ") || strings.Contains(cmd, " rm ") {
+			return "Organizing files..."
+		}
+		if strings.Contains(cmd, "chmod") || strings.Contains(cmd, "config") || strings.Contains(cmd, "setup") || strings.Contains(cmd, "export") {
+			return "Configuring environment..."
+		}
+		if strings.Contains(cmd, "build") || strings.Contains(cmd, "make") || strings.Contains(cmd, "compile") {
+			return "Building project..."
+		}
+		if strings.Contains(cmd, "test") || strings.Contains(cmd, "check") {
+			return "Testing & verifying..."
+		}
+		return "Executing command..."
+	case "write_file":
+		if path != "" {
+			return fmt.Sprintf("Implementing %s...", path)
+		}
+		return "Implementing code..."
+	case "edit_file":
+		if path != "" {
+			return fmt.Sprintf("Refactoring %s...", path)
+		}
+		return "Refactoring code..."
+	case "read_file":
+		if path != "" {
+			return fmt.Sprintf("Analyzing %s...", path)
+		}
+		return "Analyzing code..."
+	case "list_dir":
+		return "Inspecting directory..."
+	default:
+		return "Executing task..."
+	}
+}
+
 func isCodingTask(prompt string) bool {
 	p := strings.ToLower(strings.TrimSpace(prompt))
 	codingKeywords := []string{
@@ -692,15 +745,16 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				actionDesc = p
 			}
 
-			toolSpinner := NewSpinner(fmt.Sprintf("Running %s: %s", fn.Name, actionDesc))
-			if verboseProcess {
-				toolSpinner.Start()
-			}
+			taskLabel := formatActionMessage(fn.Name, args)
+			toolSpinner := NewSpinner(taskLabel)
+			toolSpinner.Start()
 
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
 			if toolErr != nil {
 				if verboseProcess {
 					toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
+				} else {
+					toolSpinner.Stop("")
 				}
 				output = fmt.Sprintf("Error: %v", toolErr)
 			} else {
@@ -714,6 +768,8 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 					if strings.TrimSpace(preview) != "" {
 						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
 					}
+				} else {
+					toolSpinner.Stop("")
 				}
 			}
 
@@ -790,15 +846,16 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 					actionDesc = p
 				}
 
-				toolSpinner := NewSpinner(fmt.Sprintf("Running %s: %s", call.Name, actionDesc))
-				if verboseProcess {
-					toolSpinner.Start()
-				}
+				taskLabel := formatActionMessage(call.Name, call.Args)
+				toolSpinner := NewSpinner(taskLabel)
+				toolSpinner.Start()
 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
 				if toolErr != nil {
 					if verboseProcess {
 						toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
+					} else {
+						toolSpinner.Stop("")
 					}
 					output = fmt.Sprintf("Error: %v", toolErr)
 				} else {
@@ -812,6 +869,8 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 						if strings.TrimSpace(preview) != "" {
 							fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
 						}
+					} else {
+						toolSpinner.Stop("")
 					}
 				}
 
