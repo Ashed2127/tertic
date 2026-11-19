@@ -516,6 +516,30 @@ func switchModelInteractive(cfg *AgentConfig) {
 	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
 }
 
+func printStreamed(text string) {
+	if text == "" {
+		return
+	}
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ' ' || r == '\n'
+	})
+	_ = words
+
+	// Stream rune by rune / token with micro delays for live typewriter output
+	runes := []rune(text)
+	for i := 0; i < len(runes); i++ {
+		fmt.Print(string(runes[i]))
+		if runes[i] == '\n' {
+			time.Sleep(15 * time.Millisecond)
+		} else if runes[i] == '.' || runes[i] == '!' || runes[i] == '?' {
+			time.Sleep(12 * time.Millisecond)
+		} else {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	fmt.Println()
+}
+
 func isCodingTask(prompt string) bool {
 	p := strings.ToLower(strings.TrimSpace(prompt))
 	codingKeywords := []string{
@@ -626,7 +650,7 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				},
 			})
 		} else if assistantMsg.Content != "" {
-			fmt.Printf("%s%s%s\n", ColorReset, assistantMsg.Content, ColorReset)
+			printStreamed(assistantMsg.Content)
 		}
 
 		if len(assistantMsg.ToolCalls) == 0 {
@@ -734,7 +758,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 
 		for _, part := range candidate.Content.Parts {
 			if part.Text != "" {
-				fmt.Printf("%s%s%s\n", ColorReset, part.Text, ColorReset)
+				printStreamed(part.Text)
 			}
 
 			if part.FunctionCall != nil {
