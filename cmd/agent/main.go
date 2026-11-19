@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,9 +15,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Ashed2127/tertic/internal/agent"
 	"github.com/Ashed2127/tertic/internal/gemini"
+	"github.com/Ashed2127/tertic/internal/model"
 	"github.com/Ashed2127/tertic/internal/ollama"
 	"github.com/Ashed2127/tertic/internal/openrouter"
+	"github.com/Ashed2127/tertic/internal/orchestrator"
 	"github.com/Ashed2127/tertic/internal/tools"
 )
 
@@ -898,6 +902,28 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 }
 
 func main() {
+	// First check informational subcommands before triggering interactive setup
+	agentReg := agent.NewRegistry()
+	if len(os.Args) > 1 {
+		sub := strings.ToLower(os.Args[1])
+		if sub == "agents" {
+			if len(os.Args) > 2 && os.Args[2] == "status" {
+				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", ColorBold, ColorReset)
+				for _, ag := range agentReg.List() {
+					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s | Tools: %v\n", ag.Name(), ag.Role(), ColorGreen, ColorReset, ag.AllowedTools())
+				}
+				fmt.Println()
+				return
+			}
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
+			for _, ag := range agentReg.List() {
+				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
+			}
+			fmt.Println()
+			return
+		}
+	}
+
 	cfg, err := resolveConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", ColorRed, err, ColorReset)
@@ -910,11 +936,16 @@ func main() {
 	var gemClient *gemini.Client
 	var gemHistory []gemini.Content
 
+	var multiAgentEngine *orchestrator.Engine
+	modelReg := model.NewRegistry()
+
 	initClients := func() {
 		chatClient = nil
 		chatHistory = nil
 		gemClient = nil
 		gemHistory = nil
+
+		var primaryProvider model.Provider
 
 		if cfg.Provider == "ollama" {
 			ollama.EnsureOllamaRunning()
@@ -923,22 +954,100 @@ func main() {
 				Role:    "system",
 				Content: SystemPrompt,
 			})
+			primaryProvider = model.NewOllamaProvider(cfg.Host, cfg.Model)
 		} else if cfg.Provider == "openrouter" {
 			chatClient = openrouter.NewClient(cfg.APIKey, cfg.Model)
 			chatHistory = append(chatHistory, openrouter.Message{
 				Role:    "system",
 				Content: SystemPrompt,
 			})
+			primaryProvider = model.NewOpenRouterProvider(cfg.APIKey, cfg.Model)
 		} else {
 			gemClient = gemini.NewClient(cfg.APIKey, cfg.Model)
+			primaryProvider = model.NewGeminiProvider(cfg.APIKey, cfg.Model)
 		}
+
+		modelReg.SetDefault(primaryProvider)
+		for _, ag := range agentReg.List() {
+			modelReg.Register(ag.Name(), primaryProvider)
+		}
+
+		multiAgentEngine = orchestrator.NewEngine(agentReg, modelReg, orchestrator.Config{
+			MaxConcurrentAgents: 1, // Sequential execution for low-RAM Android/Termux
+			SequentialOnly:      true,
+			OnProgress: func(role, status string) {
+				fmt.Printf("%s[%s]%s %s\n", ColorCyan, role, ColorReset, status)
+			},
+		})
 	}
 
 	initClients()
 
-	if len(os.Args) > 1 {
-		userPrompt := strings.Join(os.Args[1:], " ")
-		fmt.Printf("\n%s%sTertic Agent executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
+	isSingleAgentMode := false
+	args := os.Args[1:]
+	var filteredArgs []string
+	for _, a := range args {
+		if a == "--single-agent" {
+			isSingleAgentMode = true
+		} else {
+			filteredArgs = append(filteredArgs, a)
+		}
+	}
+
+	if len(filteredArgs) > 0 {
+		userPrompt := strings.Join(filteredArgs, " ")
+		subCmd := strings.ToLower(filteredArgs[0])
+
+		if subCmd == "agents" {
+			if len(filteredArgs) > 1 && filteredArgs[1] == "status" {
+				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", ColorBold, ColorReset)
+				for _, ag := range agentReg.List() {
+					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s | Allowed: %v\n", ag.Name(), ag.Role(), ColorGreen, ColorReset, ag.AllowedTools())
+				}
+				fmt.Println()
+				return
+			}
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
+			for _, ag := range agentReg.List() {
+				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
+			}
+			fmt.Println()
+			return
+		}
+
+		if subCmd == "models" {
+			fmt.Printf("\n%sConfigured Model Providers:%s\n", ColorBold, ColorReset)
+			for _, m := range modelReg.List() {
+				fmt.Printf(" • %s\n", m)
+			}
+			fmt.Println()
+			return
+		}
+
+		if subCmd == "config" {
+			fmt.Printf("\n%sActive Model Configuration:%s\n", ColorBold, ColorReset)
+			fmt.Printf(" Provider: %s\n Model:    %s\n Mode:     Sequential Android (4GB RAM safe)\n\n", cfg.Provider, cfg.Model)
+			return
+		}
+
+		// Direct Task Execution
+		fmt.Printf("\n%s%sTertic executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
+
+		if !isSingleAgentMode && isCodingTask(userPrompt) {
+			// Multi-Agent Workflow
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			out, err := multiAgentEngine.ExecuteWorkflow(ctx, userPrompt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n%sWorkflow Error: %v%s\n", ColorRed, err, ColorReset)
+			} else {
+				fmt.Println()
+				printStreamed(out)
+			}
+			return
+		}
+
+		// Single-Agent Direct Execution
 		if gemClient != nil {
 			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
@@ -953,7 +1062,7 @@ func main() {
 
 	fmt.Print(ColorCyan, Banner, ColorReset)
 	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(/model to switch | /process to toggle)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
-	fmt.Printf("%sReady for instructions%s (type your task or 'exit' to quit)\n\n", ColorDim, ColorReset)
+	fmt.Printf("%sMulti-Agent Autonomous Orchestrator Ready%s (type your task, /agents, or 'exit')\n\n", ColorDim, ColorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -972,6 +1081,15 @@ func main() {
 			break
 		}
 
+		if prompt == "/agents" {
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
+			for _, ag := range agentReg.List() {
+				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
+			}
+			fmt.Println()
+			continue
+		}
+
 		if prompt == "/model" || prompt == "/models" {
 			switchModelInteractive(cfg)
 			initClients()
@@ -988,13 +1106,27 @@ func main() {
 			continue
 		}
 
-		if gemClient != nil {
-			if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
-				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+		if isCodingTask(prompt) {
+			// Multi-Agent workflow execution
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			out, err := multiAgentEngine.ExecuteWorkflow(ctx, prompt)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%sWorkflow Error: %v%s\n\n", ColorRed, err, ColorReset)
+			} else {
+				fmt.Println()
+				printStreamed(out)
 			}
 		} else {
-			if err := runChatTurn(chatClient, &chatHistory, prompt); err != nil {
-				fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+			// Conversational turn
+			if gemClient != nil {
+				if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
+					fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+				}
+			} else {
+				if err := runChatTurn(chatClient, &chatHistory, prompt); err != nil {
+					fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
+				}
 			}
 		}
 		fmt.Println()
