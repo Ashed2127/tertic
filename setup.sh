@@ -57,10 +57,12 @@ fi
 
 cp "$SCRIPT_DIR/bin/tertic" ~/.local/bin/tertic
 cp "$SCRIPT_DIR/bin/tertic" ~/bin/tertic 2>/dev/null || true
+ln -sf ~/.local/bin/tertic ~/.local/bin/t
+ln -sf ~/bin/tertic ~/bin/t 2>/dev/null || true
 ln -sf ~/.local/bin/tertic ~/.local/bin/trtc
 ln -sf ~/bin/tertic ~/bin/trtc 2>/dev/null || true
-chmod +x ~/.local/bin/tertic ~/.local/bin/trtc
-chmod +x ~/bin/tertic ~/bin/trtc 2>/dev/null || true
+chmod +x ~/.local/bin/tertic ~/.local/bin/t ~/.local/bin/trtc
+chmod +x ~/bin/tertic ~/bin/t ~/bin/trtc 2>/dev/null || true
 
 if [ -f "$SCRIPT_DIR/bin/tertic-agent" ]; then
     cp "$SCRIPT_DIR/bin/tertic-agent" ~/.local/bin/tertic-agent
@@ -80,6 +82,7 @@ echo ""
 
 echo ""
 echo -e "${GREEN}Start the agent anytime with the short command:${NC}"
-echo -e "   ${BOLD}${CYAN}trtc${NC}                 (starts interactive agent session)"
-echo -e "   ${BOLD}${CYAN}trtc \"build an app\"${NC}  (runs a task directly)"
+echo -e "   ${BOLD}${CYAN}t${NC}                   (starts interactive agent session)"
+echo -e "   ${BOLD}${CYAN}t \"build an app\"${NC}    (runs a task directly)"
+echo -e "   ${DIM}(You can also type 'trtc' or 'tertic')${NC}"
 echo ""

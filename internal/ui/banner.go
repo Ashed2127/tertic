@@ -136,6 +136,6 @@ func RenderInputPrompt(mode voice.InputMode) string {
 	case voice.ModeHybrid:
 		return fmt.Sprintf("%s%s[hybrid] ❯%s ", th.Secondary, th.Bold, th.Reset)
 	default:
-		return fmt.Sprintf("%s%strtc ❯%s ", th.Primary, th.Bold, th.Reset)
+		return fmt.Sprintf("%s%st ❯%s ", th.Primary, th.Bold, th.Reset)
 	}
 }

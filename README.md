@@ -51,24 +51,24 @@ Tertic coordinates five specialized autonomous agents through a shared, resource
 
 ---
 
-## Commands & Usage (`trtc`)
+## Commands & Usage (`t` / `trtc`)
 
 ### 1. Launching Tasks
 
 ```bash
-trtc                     # Interactive premium multi-agent session
-trtc "build a react app" # Autonomous multi-agent execution
-trtc --single-agent "task" # Single-agent direct execution
+t                        # Interactive premium multi-agent session (or 'trtc')
+t "build a react app"    # Autonomous multi-agent execution
+t --single-agent "task"  # Single-agent direct execution
 ```
 
 ### 2. Multi-Agent CLI Commands
 
 | Command | Action |
 |---|---|
-| `trtc agents` | List all available specialized agents and roles |
-| `trtc agents status` | Inspect agent mesh status and allowed tool permissions |
-| `trtc models` | List configured model providers assigned to each agent |
-| `trtc config` | Display active runtime and memory constraints |
+| `t agents` | List all available specialized agents and roles |
+| `t agents status` | Inspect agent mesh status and allowed tool permissions |
+| `t models` | List configured model providers assigned to each agent |
+| `t config` | Display active runtime and memory constraints |
 
 ### 3. Inside Interactive Session
 
@@ -111,7 +111,7 @@ To enable voice input on Android:
    ```
 2. Install the **Termux:API** APK companion app (from F-Droid).
 3. Grant **Microphone** permission to Termux:API in Android settings.
-4. Launch `trtc` and type `/voice` or `/listen`.
+4. Launch `t` (or `trtc`) and type `/voice` or `/listen`.
 
 ---
 

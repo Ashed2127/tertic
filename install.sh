@@ -51,10 +51,12 @@ echo -e "${GREEN}[3/3] Building native agent binary...${NC}"
 # Link binaries
 cp "$INSTALL_DIR/bin/tertic" "$HOME/.local/bin/tertic"
 cp "$INSTALL_DIR/bin/tertic" "$HOME/bin/tertic" 2>/dev/null || true
+ln -sf "$HOME/.local/bin/tertic" "$HOME/.local/bin/t"
+ln -sf "$HOME/bin/tertic" "$HOME/bin/t" 2>/dev/null || true
 ln -sf "$HOME/.local/bin/tertic" "$HOME/.local/bin/trtc"
 ln -sf "$HOME/bin/tertic" "$HOME/bin/trtc" 2>/dev/null || true
-chmod +x "$HOME/.local/bin/tertic" "$HOME/.local/bin/trtc"
-chmod +x "$HOME/bin/tertic" "$HOME/bin/trtc" 2>/dev/null || true
+chmod +x "$HOME/.local/bin/tertic" "$HOME/.local/bin/t" "$HOME/.local/bin/trtc"
+chmod +x "$HOME/bin/tertic" "$HOME/bin/t" "$HOME/bin/trtc" 2>/dev/null || true
 
 cp "$INSTALL_DIR/bin/tertic-agent" "$HOME/.local/bin/tertic-agent"
 cp "$INSTALL_DIR/bin/tertic-agent" "$HOME/bin/tertic-agent" 2>/dev/null || true
@@ -72,13 +74,10 @@ export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 
 echo ""
 echo -e "${GREEN}${BOLD}Tertic installed successfully! 🎉${NC}"
-echo ""
-
-echo ""
-echo -e "${GREEN}${BOLD}Tertic installed successfully! 🎉${NC}"
 echo -e "${CYAN}OpenRouter AI is pre-configured and ready to use!${NC}"
 echo ""
 echo -e "${GREEN}Start the agent anytime by simply typing:${NC}"
-echo -e "  ${BOLD}${CYAN}trtc${NC}                 (starts interactive agent session)"
-echo -e "  ${BOLD}${CYAN}trtc \"build an app\"${NC}  (runs a task directly)"
+echo -e "  ${BOLD}${CYAN}t${NC}                   (starts interactive agent session)"
+echo -e "  ${BOLD}${CYAN}t \"build an app\"${NC}    (runs a task directly)"
+echo -e "  ${DIM}(You can also type 'trtc' or 'tertic')${NC}"
 echo ""
