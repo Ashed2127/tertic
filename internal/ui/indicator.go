@@ -20,6 +20,7 @@ type Indicator struct {
 	enabled    bool
 	isVoice    bool
 	colorTheme theme.Theme
+	stopped    bool
 }
 
 // NewIndicator creates an indicator with adaptive animated glyphs
@@ -55,7 +56,7 @@ func NewVoiceIndicator(msg string) *Indicator {
 	return ind
 }
 
-// Start begins animating on stdout
+// Start begins animating on stdout using in-place line rewriting
 func (ind *Indicator) Start() {
 	if !ind.enabled {
 		return
@@ -89,13 +90,22 @@ func (ind *Indicator) Start() {
 	}()
 }
 
-// Stop stops the animation and outputs an optional final message
+// Stop stops the animation and outputs an optional final message cleanly without line duplication
 func (ind *Indicator) Stop(finalMsg string) {
 	if !ind.enabled {
 		return
 	}
+	ind.mu.Lock()
+	if ind.stopped {
+		ind.mu.Unlock()
+		return
+	}
+	ind.stopped = true
+	ind.mu.Unlock()
+
 	close(ind.stop)
 	ind.wg.Wait()
+
 	if finalMsg != "" {
 		fmt.Printf("\r\033[2K%s\n", finalMsg)
 	} else {
@@ -115,7 +125,7 @@ func (ind *Indicator) StopFailure(msg string) {
 	ind.Stop(fmt.Sprintf("%s✖%s %s%s%s", th.Error, th.Reset, th.Bold, msg, th.Reset))
 }
 
-// Update updates the display message seamlessly
+// Update updates the in-place display message seamlessly without printing new lines
 func (ind *Indicator) Update(newMsg string) {
 	if !ind.enabled {
 		return

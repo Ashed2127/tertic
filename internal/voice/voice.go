@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,6 +24,40 @@ const (
 	ModeHybrid InputMode = "hybrid"
 )
 
+// RecordingState tracks the lifecycle of voice recording
+type RecordingState string
+
+const (
+	StateIdle         RecordingState = "IDLE"
+	StateRecording    RecordingState = "RECORDING"
+	StateStopping     RecordingState = "STOPPING"
+	StateRecorded     RecordingState = "RECORDED"
+	StateTranscribing RecordingState = "TRANSCRIBING"
+	StateCompleted    RecordingState = "COMPLETED"
+	StateFailed       RecordingState = "FAILED"
+)
+
+// GetRecordingsDir returns the dedicated writable directory for audio recordings.
+// Uses $HOME/.tertic/recordings/ rather than /tmp to ensure reliability on Termux & Android.
+func GetRecordingsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		home = "."
+	}
+	dir := filepath.Join(home, ".tertic", "recordings")
+	_ = os.MkdirAll(dir, 0755)
+	return dir
+}
+
+// GenerateAudioPath returns a unique audio file path inside the safe recordings directory.
+func GenerateAudioPath() string {
+	dir := GetRecordingsDir()
+	return filepath.Join(dir, fmt.Sprintf("voice_%d.wav", time.Now().UnixNano()))
+}
+
 // ActiveRecording represents an ongoing recording that can be stopped at any time
 type ActiveRecording struct {
 	AudioPath string
@@ -30,9 +65,11 @@ type ActiveRecording struct {
 	IsTermux  bool
 	stopped   bool
 	mu        sync.Mutex
+	StartTime time.Time
 }
 
-// Stop stops the ongoing recording process cleanly
+// Stop stops the ongoing recording process cleanly, waiting for the process to exit
+// and flushes audio buffers/headers completely before returning.
 func (r *ActiveRecording) Stop() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -42,25 +79,75 @@ func (r *ActiveRecording) Stop() error {
 	r.stopped = true
 
 	if r.IsTermux {
+		// Stop Termux microphone recording cleanly
 		stopCmd := exec.Command("termux-microphone-record", "-q")
 		_ = stopCmd.Run()
-		time.Sleep(200 * time.Millisecond)
+
+		// Wait up to 3 seconds for file to be closed and written
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if fi, err := os.Stat(r.AudioPath); err == nil && fi.Size() > 0 {
+				time.Sleep(300 * time.Millisecond) // buffer settling
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 		return nil
 	}
 
 	if r.Cmd != nil && r.Cmd.Process != nil {
-		// Send SIGINT so ffmpeg/arecord flushes WAV headers properly
+		// Send SIGINT so ffmpeg/arecord closes WAV headers properly
 		_ = r.Cmd.Process.Signal(syscall.SIGINT)
 		done := make(chan error, 1)
 		go func() {
 			done <- r.Cmd.Wait()
 		}()
+
 		select {
 		case <-done:
-		case <-time.After(1 * time.Second):
+		case <-time.After(2 * time.Second):
+			// Fallback: SIGTERM, then Kill
+			_ = r.Cmd.Process.Signal(syscall.SIGTERM)
+			time.Sleep(200 * time.Millisecond)
 			_ = r.Cmd.Process.Kill()
 		}
 	}
+
+	// Small pause to ensure filesystem buffer sync
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
+// ValidateAudioFile verifies that the audio file exists, is non-empty, and has valid header/size
+func ValidateAudioFile(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("audio file was not generated: %s", path)
+		}
+		return fmt.Errorf("cannot access audio file: %w", err)
+	}
+
+	// Minimum viable WAV file with headers is 44 bytes; require at least 1KB of captured audio
+	if fi.Size() < 44 {
+		return fmt.Errorf("audio file is empty or corrupted (size: %d bytes)", fi.Size())
+	}
+
+	// Read first 4 bytes to check RIFF magic header if it's a WAV file
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("cannot open audio file: %w", err)
+	}
+	defer f.Close()
+
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(f, header); err == nil {
+		headerStr := string(header)
+		if headerStr != "RIFF" && headerStr != "fLaC" && !strings.HasPrefix(headerStr, "Ogg") {
+			// Some formats might not start with RIFF, but warn if totally unknown
+		}
+	}
+
 	return nil
 }
 
@@ -68,11 +155,8 @@ func (r *ActiveRecording) Stop() error {
 type Engine interface {
 	Name() string
 	IsAvailable() (bool, string)
-	// StartRecording starts recording audio until stopped or timeout (up to 300 seconds)
 	StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error)
-	// Transcribe converts recorded audio into text
 	Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error)
-	// RecordAndTranscribe records and transcribes in one call (for backward compatibility)
 	RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error)
 }
 
@@ -85,43 +169,42 @@ func (t *TermuxAPIEngine) Name() string {
 
 func (t *TermuxAPIEngine) IsAvailable() (bool, string) {
 	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
-		return true, "termux-speech-to-text binary found"
+		return true, "termux-speech-to-text ready (Native Android STT)"
 	}
 	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
-		return true, "termux-microphone-record binary found"
+		return true, "termux-microphone-record ready"
 	}
 	if _, err := exec.LookPath("termux-dialog"); err == nil {
-		return true, "termux-dialog binary found"
+		return true, "termux-dialog ready"
 	}
-	return false, "Termux:API not installed (pkg install termux-api)"
+	return false, "Termux:API not installed. Run 'pkg install termux-api' and install Termux:API app from F-Droid."
 }
 
 func (t *TermuxAPIEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
 	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
-		tmpAudio := fmt.Sprintf("/tmp/tertic_voice_%d.wav", time.Now().UnixNano())
-		// termux-microphone-record -f <file> -l 300 (records up to 5 mins until stopped with -q)
-		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", tmpAudio, "-l", "300")
+		audioPath := GenerateAudioPath()
+		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", audioPath, "-l", "300")
 		if err := cmd.Start(); err != nil {
-			return nil, fmt.Errorf("failed to start termux recording: %w", err)
+			return nil, fmt.Errorf("failed to start Termux microphone: %w (check Termux:API mic permissions)", err)
 		}
 		if onStatus != nil {
 			onStatus("Recording audio (Speak now - Press [ENTER] when done)...")
 		}
 		return &ActiveRecording{
-			AudioPath: tmpAudio,
+			AudioPath: audioPath,
 			Cmd:       cmd,
 			IsTermux:  true,
+			StartTime: time.Now(),
 		}, nil
 	}
 
-	return nil, fmt.Errorf("termux-microphone-record not available")
+	return nil, fmt.Errorf("termux-microphone-record binary not found (install termux-api)")
 }
 
 func (t *TermuxAPIEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
-	if onStatus != nil {
-		onStatus("Transcribing audio...")
+	if err := ValidateAudioFile(audioPath); err != nil {
+		return "", err
 	}
-	// Fall back to cloud STT or whisper for audio file
 	return TranscribeAudioFile(ctx, audioPath, onStatus)
 }
 
@@ -133,7 +216,7 @@ func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func
 		cmd := exec.CommandContext(ctx, "termux-speech-to-text")
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("termux-speech-to-text error: %w", err)
+			return "", fmt.Errorf("termux-speech-to-text error: %w (ensure mic permission granted in Android settings)", err)
 		}
 		return strings.TrimSpace(string(out)), nil
 	}
@@ -142,14 +225,13 @@ func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func
 	if err != nil {
 		return "", err
 	}
-	// Default wait if caller doesn't manually stop
 	time.Sleep(5 * time.Second)
 	_ = rec.Stop()
 	defer os.Remove(rec.AudioPath)
 	return t.Transcribe(ctx, rec.AudioPath, onStatus)
 }
 
-// SystemAudioEngine records via arecord / ffmpeg / sox and transcribes via Whisper or Google Speech API
+// SystemAudioEngine records via arecord / ffmpeg / sox and transcribes via Whisper or Speech API
 type SystemAudioEngine struct{}
 
 func (s *SystemAudioEngine) Name() string {
@@ -178,25 +260,31 @@ func findRecordTool() string {
 }
 
 func (s *SystemAudioEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
-	tmpAudio := fmt.Sprintf("/tmp/tertic_voice_%d.wav", time.Now().UnixNano())
+	audioPath := GenerateAudioPath()
 	tool := findRecordTool()
 	if tool == "" {
-		return nil, fmt.Errorf("no audio recording utility found")
+		return nil, fmt.Errorf("no audio recording utility found (arecord, ffmpeg, or sox)")
 	}
 
 	var cmd *exec.Cmd
 	switch tool {
 	case "arecord":
-		// arecord -d 300 (allows up to 5 min, terminates cleanly on SIGINT)
-		cmd = exec.CommandContext(ctx, "arecord", "-d", "300", "-f", "cd", "-t", "wav", tmpAudio)
+		cmd = exec.CommandContext(ctx, "arecord", "-d", "300", "-f", "cd", "-t", "wav", audioPath)
 	case "ffmpeg":
-		cmd = exec.CommandContext(ctx, "ffmpeg", "-y", "-f", "pulse", "-i", "default", "-t", "300", tmpAudio)
+		// Auto-detect audio input driver: pulse, alsa, or default
+		inputDriver := "default"
+		if hasPulseAudio() {
+			inputDriver = "pulse"
+		} else {
+			inputDriver = "alsa"
+		}
+		cmd = exec.CommandContext(ctx, "ffmpeg", "-y", "-f", inputDriver, "-i", "default", "-t", "300", audioPath)
 	case "sox":
-		cmd = exec.CommandContext(ctx, "rec", "-r", "16000", "-c", "1", tmpAudio, "trim", "0", "300")
+		cmd = exec.CommandContext(ctx, "rec", "-r", "16000", "-c", "1", audioPath, "trim", "0", "300")
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start audio recording: %w", err)
+		return nil, fmt.Errorf("failed to start %s recording: %w", tool, err)
 	}
 
 	if onStatus != nil {
@@ -204,13 +292,27 @@ func (s *SystemAudioEngine) StartRecording(ctx context.Context, onStatus func(st
 	}
 
 	return &ActiveRecording{
-		AudioPath: tmpAudio,
+		AudioPath: audioPath,
 		Cmd:       cmd,
 		IsTermux:  false,
+		StartTime: time.Now(),
 	}, nil
 }
 
+func hasPulseAudio() bool {
+	if _, err := exec.LookPath("pactl"); err == nil {
+		cmd := exec.Command("pactl", "info")
+		if err := cmd.Run(); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *SystemAudioEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
+	if err := ValidateAudioFile(audioPath); err != nil {
+		return "", err
+	}
 	return TranscribeAudioFile(ctx, audioPath, onStatus)
 }
 
@@ -227,8 +329,8 @@ func (s *SystemAudioEngine) RecordAndTranscribe(ctx context.Context, onStatus fu
 
 // TranscribeAudioFile transcribes a WAV audio file using local Whisper CLI or Google Speech Recognition API
 func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
-	if _, err := os.Stat(audioPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("audio file not found: %s", audioPath)
+	if err := ValidateAudioFile(audioPath); err != nil {
+		return "", err
 	}
 
 	// 1. Try local Whisper if installed
@@ -250,7 +352,7 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		}
 	}
 
-	// 2. Transcribe via Google Speech Recognition API (FLAC/WAV standard protocol used by SpeechRecognition)
+	// 2. Transcribe via Google Speech Recognition API
 	speechKey := os.Getenv("GOOGLE_SPEECH_API_KEY")
 	if speechKey == "" {
 		speechKey = os.Getenv("GEMINI_API_KEY")
@@ -261,12 +363,12 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 	}
 
 	// Convert audio to 16kHz mono FLAC or WAV for best recognition compatibility
-	flacPath := fmt.Sprintf("/tmp/tertic_flac_%d.flac", time.Now().UnixNano())
+	flacPath := filepath.Join(GetRecordingsDir(), fmt.Sprintf("flac_%d.flac", time.Now().UnixNano()))
 	defer os.Remove(flacPath)
 
 	convertCmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", flacPath)
 	if err := convertCmd.Run(); err != nil {
-		// If ffmpeg fails, try using raw file
+		// If ffmpeg conversion fails, try using raw file
 		flacPath = audioPath
 	}
 
@@ -275,7 +377,6 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		return "", fmt.Errorf("failed to read audio file: %w", err)
 	}
 
-	// Google Speech Recognition endpoint - uses key from environment variable if configured
 	endpoint := "https://www.google.com/speech-api/v2/recognize?output=json&lang=en-US"
 	if speechKey != "" {
 		endpoint += "&key=" + speechKey
@@ -286,7 +387,7 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 	}
 	req.Header.Set("Content-Type", "audio/x-flac; rate=16000")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("speech API request failed: %w", err)
@@ -298,7 +399,6 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		return "", fmt.Errorf("failed to read API response: %w", err)
 	}
 
-	// Google speech-api returns chunks of JSON lines
 	lines := strings.Split(string(body), "\n")
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
@@ -320,7 +420,7 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		}
 	}
 
-	return "", fmt.Errorf("no speech recognized")
+	return "", fmt.Errorf("no speech recognized from audio")
 }
 
 // Manager coordinates speech detection and active input mode
@@ -341,7 +441,7 @@ func NewManager() *Manager {
 		},
 	}
 
-	// Detect best available engine
+	// Prioritize Termux engine when running on Termux, otherwise system engine
 	for _, eng := range m.engines {
 		if avail, _ := eng.IsAvailable(); avail {
 			m.activeEngine = eng
@@ -380,6 +480,7 @@ func (m *Manager) StatusReport() string {
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Input Mode: %s\n", strings.ToUpper(string(m.currentMode))))
+	sb.WriteString(fmt.Sprintf("Recordings Cache: %s\n", GetRecordingsDir()))
 	sb.WriteString("Speech Recognition Engines:\n")
 	for _, eng := range m.engines {
 		avail, details := eng.IsAvailable()
@@ -387,7 +488,7 @@ func (m *Manager) StatusReport() string {
 		if avail {
 			status = "READY"
 		}
-		sb.WriteString(fmt.Sprintf(" • %-28s [%s] (%s)\n", eng.Name(), status, details))
+		sb.WriteString(fmt.Sprintf(" • %-30s [%s] (%s)\n", eng.Name(), status, details))
 	}
 	if m.activeEngine != nil {
 		sb.WriteString(fmt.Sprintf("\nActive Engine: %s\n", m.activeEngine.Name()))

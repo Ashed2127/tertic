@@ -2,6 +2,8 @@ package voice
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,12 +24,20 @@ func (m *mockEngine) StartRecording(ctx context.Context, onStatus func(string)) 
 	if onStatus != nil {
 		onStatus("Mock recording started...")
 	}
+	tmp := GenerateAudioPath()
+	// Write dummy WAV data (> 44 bytes)
+	data := append([]byte("RIFF1234WAVEfmt "), make([]byte, 64)...)
+	_ = os.WriteFile(tmp, data, 0644)
+
 	return &ActiveRecording{
-		AudioPath: "/tmp/mock.wav",
+		AudioPath: tmp,
 		stopped:   false,
 	}, nil
 }
 func (m *mockEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
+	if err := ValidateAudioFile(audioPath); err != nil {
+		return "", err
+	}
 	if onStatus != nil {
 		onStatus("Mock transcribing...")
 	}
@@ -59,6 +69,47 @@ func TestVoiceManagerModes(t *testing.T) {
 	}
 }
 
+func TestRecordingsDirectory(t *testing.T) {
+	dir := GetRecordingsDir()
+	if !strings.Contains(dir, ".tertic/recordings") {
+		t.Fatalf("unexpected recordings directory: %s", dir)
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		t.Fatalf("recordings directory was not created: %s", dir)
+	}
+
+	p := GenerateAudioPath()
+	if filepath.Dir(p) != dir {
+		t.Fatalf("generated path %s is not in %s", p, dir)
+	}
+}
+
+func TestValidateAudioFile(t *testing.T) {
+	// Non-existent file
+	if err := ValidateAudioFile("/path/does/not/exist.wav"); err == nil {
+		t.Fatal("expected error for non-existent file")
+	}
+
+	// Empty file
+	emptyFile := filepath.Join(GetRecordingsDir(), "empty_test.wav")
+	_ = os.WriteFile(emptyFile, []byte{}, 0644)
+	defer os.Remove(emptyFile)
+
+	if err := ValidateAudioFile(emptyFile); err == nil {
+		t.Fatal("expected error for empty file")
+	}
+
+	// Valid WAV file
+	validFile := filepath.Join(GetRecordingsDir(), "valid_test.wav")
+	validData := append([]byte("RIFFheaderdataWAVEfmt "), make([]byte, 100)...)
+	_ = os.WriteFile(validFile, validData, 0644)
+	defer os.Remove(validFile)
+
+	if err := ValidateAudioFile(validFile); err != nil {
+		t.Fatalf("expected valid file to pass, got: %v", err)
+	}
+}
+
 func TestMockEngineManualStopRecording(t *testing.T) {
 	mock := &mockEngine{available: true, text: "Build a calculator in HTML"}
 	var statusMsg string
@@ -68,6 +119,7 @@ func TestMockEngineManualStopRecording(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error starting recording: %v", err)
 	}
+	defer os.Remove(rec.AudioPath)
 	_ = statusMsg
 
 	// Verify we can stop recording on demand
@@ -102,5 +154,8 @@ func TestVoiceStatusReport(t *testing.T) {
 	report := mgr.StatusReport()
 	if !strings.Contains(report, "Input Mode: TEXT") {
 		t.Fatalf("report missing input mode: %s", report)
+	}
+	if !strings.Contains(report, ".tertic/recordings") {
+		t.Fatalf("report missing recordings directory: %s", report)
 	}
 }
