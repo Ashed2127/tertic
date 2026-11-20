@@ -20,7 +20,8 @@ type VoiceSessionResult struct {
 
 // StartVoiceInputFlow implements the robust voice recording state machine:
 // IDLE → RECORDING → STOPPING → RECORDED → TRANSCRIBING → COMPLETED
-// Updates a single in-place line cleanly on stdout without duplicate messages or screen clutter.
+// Listens for ENTER (to stop), ESC (to cancel), or Ctrl+C (to cancel).
+// Guarantees immediate stop and terminal restoration on both Linux and Android Termux.
 func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *voice.Manager) VoiceSessionResult {
 	th := theme.Current()
 
@@ -57,7 +58,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 		}
 
 		// State: RECORDING
-		recIndicator := NewVoiceIndicator("Recording audio (Speak now - Press [ENTER] to stop)")
+		recIndicator := NewVoiceIndicator("Recording audio (Speak now - Press [ENTER] to stop | ESC to cancel)")
 		recIndicator.Start()
 
 		recSession, err := activeEng.StartRecording(ctx, nil)
@@ -68,31 +69,35 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			fmt.Printf("%sMicrophone unavailable: %v%s\n", th.Error, err, th.Reset)
 			fmt.Println("Ensure Termux:API has microphone permissions granted in Android Settings.")
 		} else {
-			// Listen asynchronously on stdin for user pressing [ENTER] or typing 'cancel'
-			stopChan := make(chan string, 1)
-			go func() {
-				line, _ := reader.ReadString('\n')
-				stopChan <- strings.TrimSpace(line)
-			}()
+			// Channel for stop/cancel key events
+			keyChan := make(chan RawKey, 1)
+			doneKeyListen := make(chan struct{})
 
+			// Listen for keystrokes in non-blocking raw mode
+			go ListenKeyForRecording(keyChan, doneKeyListen)
+
+			var userKey RawKey
 			select {
-			case userInput := <-stopChan:
-				// State: STOPPING - transition in-place without producing new line
-				recIndicator.Update("Stopping recording...")
-				_ = recSession.Stop()
-
-				if strings.ToLower(userInput) == "cancel" {
-					_ = os.Remove(recSession.AudioPath)
-					recIndicator.StopFailure("Recording cancelled")
-					return VoiceSessionResult{Cancelled: true}
-				}
+			case key := <-keyChan:
+				userKey = key
 			case <-ctx.Done():
-				recIndicator.Update("Recording interrupted...")
+				userKey = KeyEscape
+			}
+
+			// Signal keyboard listener to exit immediately and restore terminal
+			close(doneKeyListen)
+
+			// State: STOPPING - transition in-place without producing new line
+			if userKey == KeyEscape || userKey == KeyCtrlC {
+				recIndicator.Update("Cancelling recording...")
 				_ = recSession.Stop()
 				_ = os.Remove(recSession.AudioPath)
-				recIndicator.StopFailure("Recording cancelled by system")
+				recIndicator.StopFailure("Recording cancelled")
 				return VoiceSessionResult{Cancelled: true}
 			}
+
+			recIndicator.Update("Stopping recording...")
+			_ = recSession.Stop()
 
 			// State: RECORDED (Validate file exists & has size)
 			if valErr := voice.ValidateAudioFile(recSession.AudioPath); valErr != nil {

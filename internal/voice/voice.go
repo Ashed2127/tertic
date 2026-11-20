@@ -87,7 +87,7 @@ func (r *ActiveRecording) Stop() error {
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
 			if fi, err := os.Stat(r.AudioPath); err == nil && fi.Size() > 0 {
-				time.Sleep(300 * time.Millisecond) // buffer settling
+				time.Sleep(200 * time.Millisecond) // buffer settling
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -108,7 +108,7 @@ func (r *ActiveRecording) Stop() error {
 		case <-time.After(2 * time.Second):
 			// Fallback: SIGTERM, then Kill
 			_ = r.Cmd.Process.Signal(syscall.SIGTERM)
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 			_ = r.Cmd.Process.Kill()
 		}
 	}
@@ -144,7 +144,7 @@ func ValidateAudioFile(path string) error {
 	if _, err := io.ReadFull(f, header); err == nil {
 		headerStr := string(header)
 		if headerStr != "RIFF" && headerStr != "fLaC" && !strings.HasPrefix(headerStr, "Ogg") {
-			// Some formats might not start with RIFF, but warn if totally unknown
+			// Some formats might not start with RIFF
 		}
 	}
 
@@ -184,7 +184,8 @@ func (t *TermuxAPIEngine) StartRecording(ctx context.Context, onStatus func(stri
 	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
 		audioPath := GenerateAudioPath()
 		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", audioPath, "-l", "300")
-		// Mute stdout and stderr to prevent console pollution
+		// Detach stdin from terminal so subprocess NEVER interferes with keyboard input!
+		cmd.Stdin = nil
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {
@@ -211,6 +212,7 @@ func (t *TermuxAPIEngine) Transcribe(ctx context.Context, audioPath string, onSt
 func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
 	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
 		cmd := exec.CommandContext(ctx, "termux-speech-to-text")
+		cmd.Stdin = nil
 		out, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("termux-speech-to-text error: %w (ensure mic permission granted in Android settings)", err)
@@ -266,7 +268,7 @@ func (s *SystemAudioEngine) StartRecording(ctx context.Context, onStatus func(st
 	var cmd *exec.Cmd
 	switch tool {
 	case "arecord":
-		// -q is quiet mode (prevents arecord from printing banner to stdout/stderr)
+		// -q is quiet mode
 		cmd = exec.CommandContext(ctx, "arecord", "-q", "-d", "300", "-f", "cd", "-t", "wav", audioPath)
 	case "ffmpeg":
 		inputDriver := "default"
@@ -275,14 +277,14 @@ func (s *SystemAudioEngine) StartRecording(ctx context.Context, onStatus func(st
 		} else {
 			inputDriver = "alsa"
 		}
-		// -loglevel quiet prevents ffmpeg from printing banner & progress lines
-		cmd = exec.CommandContext(ctx, "ffmpeg", "-loglevel", "quiet", "-y", "-f", inputDriver, "-i", "default", "-t", "300", audioPath)
+		// -nostdin is critical: prevents ffmpeg from reading terminal keyboard input!
+		cmd = exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-loglevel", "quiet", "-y", "-f", inputDriver, "-i", "default", "-t", "300", audioPath)
 	case "sox":
-		// -q suppresses sox progress output
 		cmd = exec.CommandContext(ctx, "rec", "-q", "-r", "16000", "-c", "1", audioPath, "trim", "0", "300")
 	}
 
-	// Explicitly silence stdout and stderr to prevent line disruption in terminal
+	// CRITICAL: Explicitly set cmd.Stdin = nil so subprocess never competes for terminal input!
+	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
@@ -345,6 +347,7 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 			onStatus("Transcribing with local Whisper...")
 		}
 		wCmd := exec.CommandContext(ctx, whisperBin, audioPath)
+		wCmd.Stdin = nil
 		out, err := wCmd.Output()
 		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
 			return strings.TrimSpace(string(out)), nil
@@ -361,7 +364,8 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 	flacPath := filepath.Join(GetRecordingsDir(), fmt.Sprintf("flac_%d.flac", time.Now().UnixNano()))
 	defer os.Remove(flacPath)
 
-	convertCmd := exec.CommandContext(ctx, "ffmpeg", "-loglevel", "quiet", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", flacPath)
+	convertCmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-loglevel", "quiet", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", flacPath)
+	convertCmd.Stdin = nil
 	convertCmd.Stdout = nil
 	convertCmd.Stderr = nil
 	if err := convertCmd.Run(); err != nil {
