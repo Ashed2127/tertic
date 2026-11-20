@@ -20,6 +20,15 @@ func (m *mockEngine) IsAvailable() (bool, string) {
 	}
 	return false, "mock not ready"
 }
+func (m *mockEngine) HasLiveCapture() bool {
+	return false
+}
+func (m *mockEngine) LiveCapture(ctx context.Context, onStatus func(string)) (string, error) {
+	if onStatus != nil {
+		onStatus("Mock live listening...")
+	}
+	return m.text, nil
+}
 func (m *mockEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
 	if onStatus != nil {
 		onStatus("Mock recording started...")

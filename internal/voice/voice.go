@@ -81,15 +81,13 @@ func (r *ActiveRecording) Stop() error {
 	r.stopped = true
 
 	if r.IsTermux {
-		// Stop Termux microphone recording cleanly
 		stopCmd := exec.Command("termux-microphone-record", "-q")
 		_ = stopCmd.Run()
 
-		// Wait up to 3 seconds for file to be closed and written
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
 			if fi, err := os.Stat(r.AudioPath); err == nil && fi.Size() > 0 {
-				time.Sleep(200 * time.Millisecond) // buffer settling
+				time.Sleep(200 * time.Millisecond)
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -98,7 +96,6 @@ func (r *ActiveRecording) Stop() error {
 	}
 
 	if r.Cmd != nil && r.Cmd.Process != nil {
-		// Send SIGINT so ffmpeg/arecord closes WAV headers properly
 		_ = r.Cmd.Process.Signal(syscall.SIGINT)
 		done := make(chan error, 1)
 		go func() {
@@ -108,14 +105,12 @@ func (r *ActiveRecording) Stop() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			// Fallback: SIGTERM, then Kill
 			_ = r.Cmd.Process.Signal(syscall.SIGTERM)
 			time.Sleep(100 * time.Millisecond)
 			_ = r.Cmd.Process.Kill()
 		}
 	}
 
-	// Small pause to ensure filesystem buffer sync
 	time.Sleep(100 * time.Millisecond)
 	return nil
 }
@@ -130,7 +125,6 @@ func ValidateAudioFile(path string) error {
 		return fmt.Errorf("cannot access audio file: %w", err)
 	}
 
-	// Minimum viable WAV file with headers is 44 bytes; require at least 1KB of captured audio
 	if fi.Size() < 44 {
 		return fmt.Errorf("audio file is empty or corrupted (size: %d bytes)", fi.Size())
 	}
@@ -142,73 +136,66 @@ func ValidateAudioFile(path string) error {
 type Engine interface {
 	Name() string
 	IsAvailable() (bool, string)
+	HasLiveCapture() bool
+	LiveCapture(ctx context.Context, onStatus func(string)) (string, error)
 	StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error)
 	Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error)
 	RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error)
 }
 
-// TermuxAPIEngine uses Termux:API tools
+// TermuxAPIEngine uses Android's native speech recognition or microphone capture in Termux
 type TermuxAPIEngine struct{}
 
 func (t *TermuxAPIEngine) Name() string {
-	return "Termux:API Speech Recognition"
+	return "Android Native Speech Recognition (Termux:API)"
 }
 
 func (t *TermuxAPIEngine) IsAvailable() (bool, string) {
 	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
-		return true, "termux-speech-to-text ready (Native Android STT)"
+		return true, "termux-speech-to-text ready (Android SpeechRecognizer)"
+	}
+	if _, err := exec.LookPath("termux-dialog"); err == nil {
+		return true, "termux-dialog ready (Android Speech Dialog)"
 	}
 	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
 		return true, "termux-microphone-record ready"
 	}
-	if _, err := exec.LookPath("termux-dialog"); err == nil {
-		return true, "termux-dialog ready"
-	}
-	return false, "Termux:API not installed. Run 'pkg install termux-api' and install Termux:API app from F-Droid."
+	return false, "Termux:API not installed. Run 'pkg install termux-api' and install the Termux:API app from F-Droid."
 }
 
-func (t *TermuxAPIEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
-	// First check if termux-microphone-record is available for recording audio
-	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
-		audioPath := GenerateAudioPath()
-		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", audioPath, "-l", "300")
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Start(); err != nil {
-			return nil, fmt.Errorf("failed to start Termux microphone: %w (check Termux:API mic permissions)", err)
-		}
-		return &ActiveRecording{
-			AudioPath: audioPath,
-			Cmd:       cmd,
-			IsTermux:  true,
-			StartTime: time.Now(),
-		}, nil
-	}
-
-	return nil, fmt.Errorf("termux-microphone-record binary not found (install termux-api)")
-}
-
-func (t *TermuxAPIEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
-	if err := ValidateAudioFile(audioPath); err != nil {
-		return "", err
-	}
-	return TranscribeAudioFile(ctx, audioPath, onStatus)
-}
-
-func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
-	// Native Android speech recognition dialog/service (100% free, offline, instant)
+func (t *TermuxAPIEngine) HasLiveCapture() bool {
+	// Native Android speech recognition can capture live speech directly!
 	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
+		return true
+	}
+	if _, err := exec.LookPath("termux-dialog"); err == nil {
+		return true
+	}
+	return false
+}
+
+func (t *TermuxAPIEngine) LiveCapture(ctx context.Context, onStatus func(string)) (string, error) {
+	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
+		if onStatus != nil {
+			onStatus("Listening for speech (Android SpeechRecognizer)...")
+		}
 		cmd := exec.CommandContext(ctx, "termux-speech-to-text")
 		cmd.Stdin = nil
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("termux-speech-to-text error: %w (ensure mic permission granted in Android settings)", err)
+			return "", fmt.Errorf("Android SpeechRecognizer error: %w (check microphone permission in Android settings)", err)
 		}
-		return strings.TrimSpace(string(out)), nil
+		res := strings.TrimSpace(string(out))
+		if res == "" {
+			return "", fmt.Errorf("no speech recognized by Android SpeechRecognizer")
+		}
+		return res, nil
 	}
 
 	if _, err := exec.LookPath("termux-dialog"); err == nil {
+		if onStatus != nil {
+			onStatus("Opening Android speech dialog...")
+		}
 		cmd := exec.CommandContext(ctx, "termux-dialog", "speech", "-t", "Speak your instruction to Tertic")
 		cmd.Stdin = nil
 		out, err := cmd.Output()
@@ -221,8 +208,44 @@ func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func
 				return parsed.Text, nil
 			}
 		}
+		return "", fmt.Errorf("no speech input received from Android dialog")
 	}
 
+	return "", fmt.Errorf("native Android live speech capture tools not found")
+}
+
+func (t *TermuxAPIEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
+	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
+		audioPath := GenerateAudioPath()
+		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", audioPath, "-l", "300")
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start Termux microphone: %w (grant mic permission to Termux:API)", err)
+		}
+		return &ActiveRecording{
+			AudioPath: audioPath,
+			Cmd:       cmd,
+			IsTermux:  true,
+			StartTime: time.Now(),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("termux-microphone-record binary not found (run 'pkg install termux-api')")
+}
+
+func (t *TermuxAPIEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
+	if err := ValidateAudioFile(audioPath); err != nil {
+		return "", err
+	}
+	return TranscribeAudioFile(ctx, audioPath, onStatus)
+}
+
+func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
+	if t.HasLiveCapture() {
+		return t.LiveCapture(ctx, onStatus)
+	}
 	rec, err := t.StartRecording(ctx, onStatus)
 	if err != nil {
 		return "", err
@@ -233,11 +256,11 @@ func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func
 	return t.Transcribe(ctx, rec.AudioPath, onStatus)
 }
 
-// SystemAudioEngine records via arecord / ffmpeg / sox and transcribes via Whisper or Speech API
+// SystemAudioEngine records via arecord / ffmpeg / sox and transcribes via Whisper or Gemini Cloud
 type SystemAudioEngine struct{}
 
 func (s *SystemAudioEngine) Name() string {
-	return "System Audio & Speech Engine"
+	return "System Audio & Cloud Transcription"
 }
 
 func (s *SystemAudioEngine) IsAvailable() (bool, string) {
@@ -246,6 +269,14 @@ func (s *SystemAudioEngine) IsAvailable() (bool, string) {
 		return true, fmt.Sprintf("Recording utility '%s' ready", recTool)
 	}
 	return false, "No recording utility found (arecord, ffmpeg, or sox)"
+}
+
+func (s *SystemAudioEngine) HasLiveCapture() bool {
+	return false
+}
+
+func (s *SystemAudioEngine) LiveCapture(ctx context.Context, onStatus func(string)) (string, error) {
+	return "", fmt.Errorf("live capture only supported on Android native engine")
 }
 
 func findRecordTool() string {
@@ -328,17 +359,33 @@ func (s *SystemAudioEngine) RecordAndTranscribe(ctx context.Context, onStatus fu
 	return s.Transcribe(ctx, rec.AudioPath, onStatus)
 }
 
-// TranscribeAudioFile converts audio to text using available engines:
-// 1. Local Whisper binary (whisper or whisper-cpp) if installed.
-// 2. Gemini Multimodal Audio API (gemini-2.0-flash / gemini-1.5-flash) if GEMINI_API_KEY is available.
-// 3. Google Speech API (v2) if GOOGLE_SPEECH_API_KEY is configured.
-// 4. Termux speech-to-text fallback if available.
+// TranscribeAudioFile converts audio to text prioritizing:
+// 1. Android native speech recognition (when on Termux)
+// 2. Configured Gemini multimodal transcription (fast, accurate, uses existing Gemini config)
+// 3. Local Whisper / whisper.cpp
+// 4. Google Speech API (v2) if GOOGLE_SPEECH_API_KEY is configured
 func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
 	if err := ValidateAudioFile(audioPath); err != nil {
 		return "", err
 	}
 
-	// 1. Local Whisper binary
+	// 1. Check Gemini Cloud Audio Transcription
+	geminiKey := resolveGeminiKey()
+	if geminiKey != "" {
+		if onStatus != nil {
+			onStatus("Transcribing with Gemini...")
+		}
+		audioBytes, err := os.ReadFile(audioPath)
+		if err == nil {
+			b64Data := base64.StdEncoding.EncodeToString(audioBytes)
+			transcript, tErr := transcribeWithGemini(ctx, geminiKey, b64Data)
+			if tErr == nil && len(transcript) > 0 {
+				return transcript, nil
+			}
+		}
+	}
+
+	// 2. Check Local Whisper binary (whisper or whisper-cpp)
 	whisperBin := ""
 	if _, err := exec.LookPath("whisper"); err == nil {
 		whisperBin = "whisper"
@@ -358,41 +405,11 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		}
 	}
 
-	// 2. Google Gemini Multimodal Audio Transcription
-	geminiKey := os.Getenv("GEMINI_API_KEY")
-	if geminiKey == "" {
-		// Check config file
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			if data, err := os.ReadFile(filepath.Join(home, ".tertic", "config.env")); err == nil {
-				for _, line := range strings.Split(string(data), "\n") {
-					if strings.HasPrefix(line, "export GEMINI_API_KEY=") {
-						geminiKey = strings.Trim(strings.TrimPrefix(line, "export GEMINI_API_KEY="), `"' `)
-					}
-				}
-			}
-		}
-	}
-
-	if geminiKey != "" {
-		if onStatus != nil {
-			onStatus("Transcribing with Gemini Audio...")
-		}
-		audioBytes, err := os.ReadFile(audioPath)
-		if err == nil {
-			b64Data := base64.StdEncoding.EncodeToString(audioBytes)
-			transcript, tErr := transcribeWithGemini(ctx, geminiKey, b64Data)
-			if tErr == nil && len(transcript) > 0 {
-				return transcript, nil
-			}
-		}
-	}
-
-	// 3. Google Speech API (v2) with explicit key
+	// 3. Google Speech API (v2) if key is configured
 	speechKey := os.Getenv("GOOGLE_SPEECH_API_KEY")
 	if speechKey != "" {
 		if onStatus != nil {
-			onStatus("Transcribing with Speech Recognition API...")
+			onStatus("Transcribing with Google Speech API...")
 		}
 		flacPath := filepath.Join(GetRecordingsDir(), fmt.Sprintf("flac_%d.flac", time.Now().UnixNano()))
 		defer os.Remove(flacPath)
@@ -433,79 +450,118 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		}
 	}
 
-	// Provide clear actionable troubleshooting guidance
-	return "", fmt.Errorf("no transcription backend active. Options:\n  1. In Termux: ensure Termux:API is installed ('pkg install termux-api') for native Android speech recognition.\n  2. Or set GEMINI_API_KEY in ~/.tertic/config.env for instant cloud audio transcription.\n  3. Or install local whisper / whisper-cpp.")
+	return "", fmt.Errorf("no transcription backend active.\n" +
+		"To transcribe voice in Tertic, choose one:\n" +
+		"  1. Android Native: In Termux run 'pkg install termux-api' and install Termux:API app from F-Droid.\n" +
+		"  2. Cloud Gemini: Set GEMINI_API_KEY in ~/.tertic/config.env (or export GEMINI_API_KEY=\"...\").\n" +
+		"  3. Local Whisper: Install 'whisper' or 'whisper-cpp' on your system.")
+}
+
+func resolveGeminiKey() string {
+	if k := os.Getenv("GEMINI_API_KEY"); k != "" {
+		return k
+	}
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		if data, err := os.ReadFile(filepath.Join(home, ".tertic", "config.env")); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "export GEMINI_API_KEY=") {
+					return strings.Trim(strings.TrimPrefix(line, "export GEMINI_API_KEY="), `"' `)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func transcribeWithGemini(ctx context.Context, apiKey string, b64Audio string) (string, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]interface{}{
-					{
-						"text": "Transcribe this spoken audio verbatim into plain text. Output ONLY the transcribed words with no commentary or formatting.",
-					},
-					{
-						"inlineData": map[string]string{
-							"mimeType": "audio/wav",
-							"data":     b64Audio,
+	// Use current Gemini models that support multimodal audio
+	supportedModels := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"}
+
+	var lastErr error
+	for _, m := range supportedModels {
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", m, apiKey)
+		payload := map[string]interface{}{
+			"contents": []map[string]interface{}{
+				{
+					"parts": []map[string]interface{}{
+						{
+							"text": "Transcribe this spoken audio verbatim into plain English text. Return ONLY the transcribed text. Do not add quotes, commentary, or markdown.",
+						},
+						{
+							"inlineData": map[string]string{
+								"mimeType": "audio/wav",
+								"data":     b64Audio,
+							},
 						},
 					},
 				},
 			},
-		},
+		}
+
+		jsonBytes, err := json.Marshal(payload)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 25 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var parsed struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			lastErr = err
+			continue
+		}
+
+		if parsed.Error != nil {
+			lastErr = fmt.Errorf("Gemini API (%s): %s", m, parsed.Error.Message)
+			continue
+		}
+
+		if len(parsed.Candidates) > 0 && len(parsed.Candidates[0].Content.Parts) > 0 {
+			res := strings.TrimSpace(parsed.Candidates[0].Content.Parts[0].Text)
+			if res != "" {
+				return res, nil
+			}
+		}
 	}
 
-	jsonBytes, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
+	if lastErr != nil {
+		return "", lastErr
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 25 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	var parsed struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
-	}
-
-	if parsed.Error != nil {
-		return "", fmt.Errorf("Gemini API error: %s", parsed.Error.Message)
-	}
-
-	if len(parsed.Candidates) > 0 && len(parsed.Candidates[0].Content.Parts) > 0 {
-		return strings.TrimSpace(parsed.Candidates[0].Content.Parts[0].Text), nil
-	}
-
-	return "", fmt.Errorf("empty transcription from Gemini")
+	return "", fmt.Errorf("Gemini audio transcription returned empty result")
 }
 
 // Manager coordinates speech detection and active input mode
@@ -566,21 +622,29 @@ func (m *Manager) StatusReport() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Input Mode: %s\n", strings.ToUpper(string(m.currentMode))))
 	sb.WriteString(fmt.Sprintf("Recordings Cache: %s\n", GetRecordingsDir()))
-	sb.WriteString("Speech Recognition Engines:\n")
+
+	gemKey := resolveGeminiKey()
+	if gemKey != "" {
+		sb.WriteString("Cloud STT Backend: Gemini Audio Ready\n")
+	} else {
+		sb.WriteString("Cloud STT Backend: Not configured (add GEMINI_API_KEY to ~/.tertic/config.env)\n")
+	}
+
+	sb.WriteString("\nAvailable Recognition Backends:\n")
 	for _, eng := range m.engines {
 		avail, details := eng.IsAvailable()
 		status := "NOT AVAILABLE"
 		if avail {
 			status = "READY"
 		}
-		sb.WriteString(fmt.Sprintf(" • %-30s [%s] (%s)\n", eng.Name(), status, details))
+		sb.WriteString(fmt.Sprintf(" • %-42s [%s] (%s)\n", eng.Name(), status, details))
 	}
 	if m.activeEngine != nil {
 		sb.WriteString(fmt.Sprintf("\nActive Engine: %s\n", m.activeEngine.Name()))
 	} else {
-		sb.WriteString("\nActive Engine: None (Keyboard text input active). To enable voice on Termux:\n")
-		sb.WriteString("  1. pkg install termux-api\n")
-		sb.WriteString("  2. Install Termux:API app from F-Droid & grant Microphone permission.\n")
+		sb.WriteString("\nActive Engine: None (Keyboard text input active). To enable voice:\n")
+		sb.WriteString("  1. In Termux: pkg install termux-api && install Termux:API app from F-Droid.\n")
+		sb.WriteString("  2. In Linux/Desktop: set GEMINI_API_KEY in ~/.tertic/config.env or install whisper.\n")
 	}
 	return sb.String()
 }

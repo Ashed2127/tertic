@@ -57,7 +57,42 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			return VoiceSessionResult{Cancelled: true}
 		}
 
-		// State: RECORDING
+		// If the engine supports live direct capture (e.g. Android Native SpeechRecognizer via Termux:API)
+		if activeEng.HasLiveCapture() {
+			recIndicator := NewVoiceIndicator("Listening for speech (Speak now - Android SpeechRecognizer)...")
+			recIndicator.Start()
+
+			transcribed, err := activeEng.LiveCapture(ctx, func(s string) {
+				recIndicator.Update(s)
+			})
+
+			if err != nil {
+				recIndicator.StopFailure("Voice capture failed")
+				fmt.Printf("%sVoice capture error: %v%s\n", th.Error, err, th.Reset)
+				fmt.Printf("\n%sTry recording again? (y/n):%s ", th.Warning, th.Reset)
+				retryAns, _ := reader.ReadString('\n')
+				if strings.ToLower(strings.TrimSpace(retryAns)) == "y" {
+					continue
+				}
+				return VoiceSessionResult{Cancelled: true}
+			}
+
+			recIndicator.StopSuccess("Speech recognized successfully.")
+			transcribed = strings.TrimSpace(transcribed)
+			if transcribed == "" {
+				fmt.Printf("%s[No speech recognized]%s\n", th.Warning, th.Reset)
+				fmt.Printf("Try again? (y/n): ")
+				retryAns, _ := reader.ReadString('\n')
+				if strings.ToLower(strings.TrimSpace(retryAns)) == "y" {
+					continue
+				}
+				return VoiceSessionResult{Cancelled: true}
+			}
+
+			return reviewAndSubmit(reader, th, transcribed)
+		}
+
+		// State: RECORDING (Audio file recording workflow)
 		recIndicator := NewVoiceIndicator("Recording audio (Speak now - Press [ENTER] to stop | ESC to cancel)")
 		recIndicator.Start()
 
@@ -144,47 +179,55 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			return VoiceSessionResult{Cancelled: true}
 		}
 
-		// Transcription Review Box
-		fmt.Printf("\n%s──────────────── TRANSCRIPTION ────────────────%s\n", th.Border, th.Reset)
-		fmt.Printf(" %s%s\"%s\"%s\n", th.Bold, th.Text, transcribed, th.Reset)
-		fmt.Printf("%s────────────────────────────────────────────────%s\n\n", th.Border, th.Reset)
-
-		reviewOpts := []string{
-			"1) Submit instruction to Tertic agent (Enter)",
-			"2) Edit transcription using keyboard",
-			"3) Record again",
-			"4) Cancel and return",
-		}
-
-		choice := SelectInteractiveWithTheme("Choose Action for Transcribed Instruction:", reviewOpts)
-
-		switch choice {
-		case 0:
-			// Submit directly
-			fmt.Printf("%s✔ Instruction approved & submitted to Tertic.%s\n\n", th.Success, th.Reset)
-			return VoiceSessionResult{Text: transcribed, Submitted: true}
-
-		case 1:
-			// Edit transcription
-			fmt.Printf("\n%sEdit your instruction below (press Enter to confirm):%s\n", th.Primary, th.Reset)
-			fmt.Printf("%sOriginal:%s %s\n", th.Muted, th.Reset, transcribed)
-			fmt.Printf("%sEdited >%s ", th.Primary, th.Reset)
-			edited, _ := reader.ReadString('\n')
-			edited = strings.TrimSpace(edited)
-			if edited == "" {
-				edited = transcribed
-			}
-			fmt.Printf("%s✔ Instruction updated & submitted.%s\n\n", th.Success, th.Reset)
-			return VoiceSessionResult{Text: edited, Submitted: true}
-
-		case 2:
-			// Record again
+		res := reviewAndSubmit(reader, th, transcribed)
+		if res.Cancelled && res.Text == "__RECORD_AGAIN__" {
 			continue
-
-		case 3:
-			// Cancel
-			fmt.Printf("%s[Voice instruction cancelled]%s\n\n", th.Muted, th.Reset)
-			return VoiceSessionResult{Cancelled: true}
 		}
+		return res
+	}
+}
+
+func reviewAndSubmit(reader *bufio.Reader, th theme.Theme, transcribed string) VoiceSessionResult {
+	// Transcription Review Box
+	fmt.Printf("\n%s──────────────── TRANSCRIPTION ────────────────%s\n", th.Border, th.Reset)
+	fmt.Printf(" %s%s\"%s\"%s\n", th.Bold, th.Text, transcribed, th.Reset)
+	fmt.Printf("%s────────────────────────────────────────────────%s\n\n", th.Border, th.Reset)
+
+	reviewOpts := []string{
+		"1) Submit instruction to Tertic agent (Enter)",
+		"2) Edit transcription using keyboard",
+		"3) Record again",
+		"4) Cancel and return",
+	}
+
+	choice := SelectInteractiveWithTheme("Choose Action for Transcribed Instruction:", reviewOpts)
+
+	switch choice {
+	case 0:
+		// Submit directly
+		fmt.Printf("%s✔ Instruction approved & submitted to Tertic.%s\n\n", th.Success, th.Reset)
+		return VoiceSessionResult{Text: transcribed, Submitted: true}
+
+	case 1:
+		// Edit transcription
+		fmt.Printf("\n%sEdit your instruction below (press Enter to confirm):%s\n", th.Primary, th.Reset)
+		fmt.Printf("%sOriginal:%s %s\n", th.Muted, th.Reset, transcribed)
+		fmt.Printf("%sEdited >%s ", th.Primary, th.Reset)
+		edited, _ := reader.ReadString('\n')
+		edited = strings.TrimSpace(edited)
+		if edited == "" {
+			edited = transcribed
+		}
+		fmt.Printf("%s✔ Instruction updated & submitted.%s\n\n", th.Success, th.Reset)
+		return VoiceSessionResult{Text: edited, Submitted: true}
+
+	case 2:
+		// Record again
+		return VoiceSessionResult{Cancelled: true, Text: "__RECORD_AGAIN__"}
+
+	default:
+		// Cancel
+		fmt.Printf("%s[Voice instruction cancelled]%s\n\n", th.Muted, th.Reset)
+		return VoiceSessionResult{Cancelled: true}
 	}
 }
