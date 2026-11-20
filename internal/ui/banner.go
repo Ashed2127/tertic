@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/Ashed2127/tertic/internal/commands"
 	"github.com/Ashed2127/tertic/internal/theme"
 	"github.com/Ashed2127/tertic/internal/voice"
 )
@@ -98,33 +99,34 @@ func RenderHelp() {
 	th := theme.Current()
 	fmt.Printf("\n%s%sTertic Interactive Command Reference:%s\n\n", th.Bold, th.Primary, th.Reset)
 
-	commands := []struct {
-		cmd  string
-		desc string
-	}{
-		{"/help", "Display this interactive command manual"},
-		{"/model", "Switch between Cloud and Local Offline models"},
-		{"/models", "List currently configured models"},
-		{"/agents", "Display specialized autonomous agents & roles"},
-		{"/status", "Inspect multi-agent runtime & tool mesh status"},
-		{"/voice", "Activate voice input mode (speak instructions)"},
-		{"/text", "Switch to keyboard text input mode"},
-		{"/input", "Show and configure input modes (Text/Voice/Hybrid)"},
-		{"/listen", "Start recording voice prompt immediately"},
-		{"/stop", "Stop active voice recording and transcribe"},
-		{"/theme", "Change terminal color theme (dark/light/mono/contrast)"},
-		{"/verbose", "Toggle detailed tool execution output & previews"},
-		{"/clear", "Clear terminal screen and redraw welcome view"},
-		{"/history", "Display shared session interaction history"},
-		{"/context", "Display project directory structure and context"},
-		{"/config", "Display active model and system configuration"},
-		{"/exit", "Safely exit Tertic session"},
+	categories := []commands.Category{
+		commands.CategoryGeneral,
+		commands.CategoryModels,
+		commands.CategoryAgents,
+		commands.CategoryVoice,
+		commands.CategoryConfig,
+		commands.CategorySession,
+		commands.CategoryDeveloper,
 	}
 
-	for _, c := range commands {
-		fmt.Printf("  %s%-12s%s %s%s%s\n", th.Primary, c.cmd, th.Reset, th.Muted, c.desc, th.Reset)
+	allCmds := commands.Default().ListAll()
+	for _, cat := range categories {
+		var catCmds []commands.Command
+		for _, c := range allCmds {
+			if c.Category == cat {
+				catCmds = append(catCmds, c)
+			}
+		}
+		if len(catCmds) == 0 {
+			continue
+		}
+
+		fmt.Printf(" %s%s[%s]%s\n", th.Bold, th.Secondary, cat, th.Reset)
+		for _, c := range catCmds {
+			fmt.Printf("   %s%-12s%s %s%s%s\n", th.Primary, c.Name, th.Reset, th.Muted, c.Description, th.Reset)
+		}
+		fmt.Println()
 	}
-	fmt.Println()
 }
 
 // RenderInputPrompt renders a distinctive, clean input prompt line

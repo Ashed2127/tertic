@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"bufio"
 	"strings"
 	"testing"
 
+	"github.com/Ashed2127/tertic/internal/commands"
 	"github.com/Ashed2127/tertic/internal/theme"
 )
 
@@ -55,5 +57,21 @@ func TestFormatInlineMarkdown(t *testing.T) {
 	formatted := formatInlineMarkdown(text, theme.DarkTheme())
 	if !strings.Contains(formatted, "key details") || !strings.Contains(formatted, "src/index.js") {
 		t.Fatalf("formatting lost text content: %s", formatted)
+	}
+}
+
+func TestInteractiveSlashReaderFallback(t *testing.T) {
+	prompt := "t ❯ "
+	reader := NewInteractiveSlashReader(prompt, commands.AppState{})
+	input := strings.NewReader("echo hello\n")
+	buf := bufio.NewReader(input)
+
+	// In non-terminal testing context, ReadLine falls back to standard line reading safely
+	res, err := reader.ReadLine(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res != "echo hello" {
+		t.Fatalf("expected 'echo hello', got %q", res)
 	}
 }

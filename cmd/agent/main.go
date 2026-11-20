@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Ashed2127/tertic/internal/agent"
+	"github.com/Ashed2127/tertic/internal/commands"
 	"github.com/Ashed2127/tertic/internal/gemini"
 	"github.com/Ashed2127/tertic/internal/model"
 	"github.com/Ashed2127/tertic/internal/ollama"
@@ -883,7 +884,12 @@ func main() {
 
 		// Text or Hybrid Mode Prompt
 		promptPrefix := ui.RenderInputPrompt(currentMode)
-		input, err := ui.ReadMultiline(reader, promptPrefix)
+		appState := commands.AppState{
+			IsRecording: false,
+			IsExecuting: false,
+			VoiceActive: currentMode == voice.ModeVoice || currentMode == voice.ModeHybrid,
+		}
+		input, err := ui.ReadMultilineWithState(reader, promptPrefix, appState)
 		if err != nil {
 			break
 		}

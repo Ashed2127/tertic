@@ -8,33 +8,28 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/Ashed2127/tertic/internal/commands"
 	"github.com/Ashed2127/tertic/internal/theme"
 )
 
 // ReadMultiline reads input line-by-line.
+// If stdin is an interactive terminal, it uses InteractiveSlashReader for
+// real-time slash-command autocomplete, arrow navigation, and TAB completion.
 // If a line ends with '\' or user enters '"""', it continues multiline input until closed or empty line.
 // Regular lines submit immediately on Enter.
-// Typing '/' displays contextual slash-command suggestions.
 func ReadMultiline(reader *bufio.Reader, promptPrefix string) (string, error) {
-	fmt.Print(promptPrefix)
+	return ReadMultilineWithState(reader, promptPrefix, commands.AppState{})
+}
 
-	firstLine, err := reader.ReadString('\n')
+// ReadMultilineWithState reads input with awareness of the current application state (e.g. recording)
+func ReadMultilineWithState(reader *bufio.Reader, promptPrefix string, state commands.AppState) (string, error) {
+	slashReader := NewInteractiveSlashReader(promptPrefix, state)
+	firstLine, err := slashReader.ReadLine(reader)
 	if err != nil {
 		return "", err
 	}
 
 	trimmedFirst := strings.TrimRight(firstLine, "\r\n")
-
-	// Check if user initiated slash command suggestions
-	if trimmedFirst == "/" {
-		ShowSlashSuggestions()
-		fmt.Printf("\n%s", promptPrefix)
-		secondLine, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		trimmedFirst = strings.TrimRight(secondLine, "\r\n")
-	}
 
 	// Multiline delimiter block """
 	if strings.HasPrefix(trimmedFirst, `"""`) {
@@ -88,29 +83,12 @@ func ReadMultiline(reader *bufio.Reader, promptPrefix string) (string, error) {
 	return trimmedFirst, nil
 }
 
-// ShowSlashSuggestions prints instant command suggestions
+// ShowSlashSuggestions prints instant command suggestions from the central registry
 func ShowSlashSuggestions() {
 	th := theme.Current()
 	fmt.Printf("\n%s%sCommand suggestions:%s\n", th.Bold, th.Primary, th.Reset)
-	suggestions := []struct {
-		cmd  string
-		desc string
-	}{
-		{"/help", "List all available commands"},
-		{"/model", "Switch AI model or provider"},
-		{"/models", "List configured models"},
-		{"/voice", "Activate voice input mode"},
-		{"/text", "Switch to keyboard text mode"},
-		{"/input", "View and switch input modes"},
-		{"/listen", "Record voice instruction now"},
-		{"/theme", "Change theme (dark/light/mono/contrast)"},
-		{"/verbose", "Toggle detailed execution output"},
-		{"/clear", "Clear terminal screen"},
-		{"/status", "Check system status"},
-		{"/exit", "Exit session"},
-	}
-	for _, s := range suggestions {
-		fmt.Printf("  %s%-10s%s %s%s%s\n", th.Primary, s.cmd, th.Reset, th.Muted, s.desc, th.Reset)
+	for _, cmd := range commands.Default().ListAll() {
+		fmt.Printf("  %s%-12s%s %s%s%s\n", th.Primary, cmd.Name, th.Reset, th.Muted, cmd.Description, th.Reset)
 	}
 }
 
