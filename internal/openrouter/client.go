@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultModel = "cohere/north-mini-code:free"
+	DefaultModel = "google/gemma-4-31b-it:free"
 	APIBaseURL   = "https://openrouter.ai/api/v1/chat/completions"
 )
 

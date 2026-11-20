@@ -255,8 +255,8 @@ func switchModelInteractive(cfg *AgentConfig) {
 		cloudOpts := []string{
 			"Google Gemini 3.1 Flash-Lite (High speed, Free tier)",
 			"Google Gemini 3 Flash Preview (Reasoning & Full tools)",
-			"OpenRouter: Cohere North Mini Code (Free, Fast, Tool-Enabled)",
-			"OpenRouter: Llama 3.3 70B (Free remote full-stack)",
+			"OpenRouter: Google Gemma 4 31B (Free, Fast, Tool-Enabled)",
+			"OpenRouter: Nvidia Nemotron 3.5 Lightning (Free remote reasoning)",
 			"OpenRouter: Qwen 2.5 Coder 32B (Free remote coding)",
 			"OpenRouter: DeepSeek R1 (Free remote reasoning)",
 		}
@@ -270,13 +270,13 @@ func switchModelInteractive(cfg *AgentConfig) {
 			cfg.Model = "gemini-3-flash-preview"
 		case 2:
 			cfg.Provider = "openrouter"
-			cfg.Model = "cohere/north-mini-code:free"
+			cfg.Model = "google/gemma-4-31b-it:free"
 			if cfg.APIKey == "" {
 				cfg.APIKey = getBuiltinOpenRouterKey()
 			}
 		case 3:
 			cfg.Provider = "openrouter"
-			cfg.Model = "meta-llama/llama-3.3-70b-instruct:free"
+			cfg.Model = "nvidia/nemotron-3.5-lightning:free"
 			if cfg.APIKey == "" {
 				cfg.APIKey = getBuiltinOpenRouterKey()
 			}
@@ -997,6 +997,10 @@ func main() {
 				continue
 			}
 			prompt = res.Text
+			// Execute task immediately with transcribed instruction
+			executeTask(prompt, cfg, gemClient, chatClient, multiAgentEngine, stopMultiAgentProgress, &gemHistory, &chatHistory)
+			fmt.Println()
+			continue
 		}
 
 		if lowPrompt == "/verbose" || lowPrompt == "/process" {

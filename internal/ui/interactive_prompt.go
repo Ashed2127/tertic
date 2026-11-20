@@ -237,10 +237,15 @@ func (r *InteractiveSlashReader) ReadLine(fallbackReader *bufio.Reader) (string,
 				continue
 			}
 
-			// ESC (27)
+			// ESC (27) - closes menu if open, or clears input line
 			if b == 27 {
 				if menuOpen {
 					menuOpen = false
+					clearMenu()
+					renderLineAndMenu(nil)
+				} else {
+					// Clear the input line if ESC pressed while typing
+					input = nil
 					clearMenu()
 					renderLineAndMenu(nil)
 				}

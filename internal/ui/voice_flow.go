@@ -52,7 +52,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 		fmt.Printf("%sOptions:%s Press [ENTER] to start recording (or type 'cancel' / 'exit'): ", th.Muted, th.Reset)
 		initInput, _ := reader.ReadString('\n')
 		initTrimmed := strings.ToLower(strings.TrimSpace(initInput))
-		if initTrimmed == "cancel" || initTrimmed == "exit" || initTrimmed == "q" {
+		if initTrimmed == "cancel" || initTrimmed == "exit" || initTrimmed == "q" || initTrimmed == "cancle" {
 			fmt.Printf("%s[Voice session cancelled]%s\n\n", th.Muted, th.Reset)
 			return VoiceSessionResult{Cancelled: true}
 		}
