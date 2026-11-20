@@ -17,6 +17,7 @@ import (
 	"github.com/Ashed2127/tertic/internal/commands"
 	"github.com/Ashed2127/tertic/internal/gemini"
 	"github.com/Ashed2127/tertic/internal/groq"
+	"github.com/Ashed2127/tertic/internal/mistral"
 	"github.com/Ashed2127/tertic/internal/model"
 	"github.com/Ashed2127/tertic/internal/ollama"
 	"github.com/Ashed2127/tertic/internal/openrouter"
@@ -97,6 +98,14 @@ func resolveConfig() (*AgentConfig, error) {
 		return &AgentConfig{Provider: "groq", APIKey: strings.TrimSpace(key), Model: m}, nil
 	}
 
+	if key := os.Getenv("MISTRAL_API_KEY"); strings.TrimSpace(key) != "" {
+		m := os.Getenv("MISTRAL_MODEL")
+		if m == "" {
+			m = "mistral-small-latest"
+		}
+		return &AgentConfig{Provider: "mistral", APIKey: strings.TrimSpace(key), Model: m}, nil
+	}
+
 	if key := os.Getenv("GEMINI_API_KEY"); strings.TrimSpace(key) != "" {
 		m := os.Getenv("GEMINI_MODEL")
 		if m == "" {
@@ -109,7 +118,7 @@ func resolveConfig() (*AgentConfig, error) {
 	if home != "" {
 		configFile := filepath.Join(home, ".tertic", "config.env")
 		if data, err := os.ReadFile(configFile); err == nil {
-			var orKey, gemKey, groqKey, orModel, gemModel, groqModel, olModel, olHost, savedProvider string
+			var orKey, gemKey, groqKey, misKey, orModel, gemModel, groqModel, misModel, olModel, olHost, savedProvider string
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
@@ -128,6 +137,12 @@ func resolveConfig() (*AgentConfig, error) {
 				if strings.HasPrefix(line, "export GROQ_MODEL=") {
 					groqModel = strings.Trim(strings.TrimPrefix(line, "export GROQ_MODEL="), `"' `)
 				}
+				if strings.HasPrefix(line, "export MISTRAL_API_KEY=") {
+					misKey = strings.Trim(strings.TrimPrefix(line, "export MISTRAL_API_KEY="), `"' `)
+				}
+				if strings.HasPrefix(line, "export MISTRAL_MODEL=") {
+					misModel = strings.Trim(strings.TrimPrefix(line, "export MISTRAL_MODEL="), `"' `)
+				}
 				if strings.HasPrefix(line, "export GEMINI_API_KEY=") {
 					gemKey = strings.Trim(strings.TrimPrefix(line, "export GEMINI_API_KEY="), `"' `)
 				}
@@ -140,6 +155,13 @@ func resolveConfig() (*AgentConfig, error) {
 				if strings.HasPrefix(line, "export OLLAMA_HOST=") {
 					olHost = strings.Trim(strings.TrimPrefix(line, "export OLLAMA_HOST="), `"' `)
 				}
+			}
+
+			if savedProvider == "mistral" && misKey != "" {
+				if misModel == "" {
+					misModel = "mistral-small-latest"
+				}
+				return &AgentConfig{Provider: "mistral", APIKey: misKey, Model: misModel}, nil
 			}
 
 			if savedProvider == "groq" && groqKey != "" {
@@ -367,6 +389,7 @@ func switchModelInteractive(cfg *AgentConfig) {
 			"Google Gemini API Key",
 			"OpenRouter API Key",
 			"Groq Cloud API Key (Free tier - ultra fast LPU)",
+			"Mistral AI API Key (Free tier / La Plateforme)",
 		}
 		kIdx := ui.SelectInteractiveWithTheme("Which API Key do you want to provide?", keyOpts)
 		reader := bufio.NewReader(os.Stdin)
@@ -382,12 +405,18 @@ func switchModelInteractive(cfg *AgentConfig) {
 			cfg.APIKey = strings.TrimSpace(k)
 			cfg.Provider = "openrouter"
 			cfg.Model = openrouter.DefaultModel
-		} else {
+		} else if kIdx == 2 {
 			fmt.Print("\nEnter your Groq API Key (gsk_...): ")
 			k, _ := reader.ReadString('\n')
 			cfg.APIKey = strings.TrimSpace(k)
 			cfg.Provider = "groq"
 			cfg.Model = "llama-3.3-70b-versatile"
+		} else {
+			fmt.Print("\nEnter your Mistral API Key: ")
+			k, _ := reader.ReadString('\n')
+			cfg.APIKey = strings.TrimSpace(k)
+			cfg.Provider = "mistral"
+			cfg.Model = "mistral-small-latest"
 		}
 	}
 
@@ -401,6 +430,8 @@ func switchModelInteractive(cfg *AgentConfig) {
 			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"openrouter\"\nexport OPENROUTER_API_KEY=\"%s\"\nexport OPENROUTER_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
 		} else if cfg.Provider == "groq" {
 			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"groq\"\nexport GROQ_API_KEY=\"%s\"\nexport GROQ_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
+		} else if cfg.Provider == "mistral" {
+			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"mistral\"\nexport MISTRAL_API_KEY=\"%s\"\nexport MISTRAL_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
 		} else {
 			_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"gemini\"\nexport GEMINI_API_KEY=\"%s\"\nexport GEMINI_MODEL=\"%s\"\n", cfg.APIKey, cfg.Model)), 0600)
 		}
@@ -747,6 +778,13 @@ func main() {
 				Content: SystemPrompt,
 			})
 			primaryProvider = model.NewGroqProvider(cfg.APIKey, cfg.Model)
+		} else if cfg.Provider == "mistral" {
+			chatClient = mistral.NewClient(cfg.APIKey, cfg.Model)
+			chatHistory = append(chatHistory, openrouter.Message{
+				Role:    "system",
+				Content: SystemPrompt,
+			})
+			primaryProvider = model.NewMistralProvider(cfg.APIKey, cfg.Model)
 		} else {
 			gemClient = gemini.NewClient(cfg.APIKey, cfg.Model)
 			primaryProvider = model.NewGeminiProvider(cfg.APIKey, cfg.Model)

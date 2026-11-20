@@ -386,6 +386,85 @@ func (p *GroqProvider) Generate(ctx context.Context, messages []Message, toolDef
 	return res, nil
 }
 
+// MistralProvider wraps Mistral AI API
+type MistralProvider struct {
+	client *openrouter.Client
+	model  string
+}
+
+func NewMistralProvider(apiKey, model string) *MistralProvider {
+	if model == "" {
+		model = "mistral-small-latest"
+	}
+	c := openrouter.NewClient(apiKey, model)
+	return &MistralProvider{
+		client: c,
+		model:  model,
+	}
+}
+
+func (p *MistralProvider) Name() string               { return "mistral" }
+func (p *MistralProvider) ModelID() string            { return p.model }
+func (p *MistralProvider) SupportsNativeTools() bool  { return true }
+
+func (p *MistralProvider) Generate(ctx context.Context, messages []Message, toolDefs []tools.ToolDefinition, opts ModelOptions) (*Response, error) {
+	var orMsgs []openrouter.Message
+	for _, m := range messages {
+		var tcs []openrouter.ToolCall
+		for _, tc := range m.ToolCalls {
+			argsBytes, _ := tools.MarshalJSON(tc.Arguments)
+			tcs = append(tcs, openrouter.ToolCall{
+				ID:   tc.ID,
+				Type: "function",
+				Function: openrouter.FunctionCall{
+					Name:      tc.Name,
+					Arguments: string(argsBytes),
+				},
+			})
+		}
+		orMsgs = append(orMsgs, openrouter.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+			ToolCalls:  tcs,
+		})
+	}
+
+	req := openrouter.ChatCompletionRequest{
+		Model:    p.model,
+		Messages: orMsgs,
+	}
+	if len(toolDefs) > 0 {
+		req.Tools = openrouter.ConvertToolDefinitions(toolDefs)
+	}
+
+	resp, err := p.client.Chat(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no response choices returned from mistral")
+	}
+
+	choice := resp.Choices[0]
+	res := &Response{
+		Content:      choice.Message.Content,
+		FinishReason: choice.FinishReason,
+	}
+
+	for _, tc := range choice.Message.ToolCalls {
+		var args map[string]interface{}
+		_ = tools.UnmarshalJSON([]byte(tc.Function.Arguments), &args)
+		res.ToolCalls = append(res.ToolCalls, ToolCallRequest{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: args,
+		})
+	}
+
+	return res, nil
+}
+
 // Registry maintains active model providers
 type Registry struct {
 	providers map[string]Provider
