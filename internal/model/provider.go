@@ -307,6 +307,85 @@ func (p *GeminiProvider) Generate(ctx context.Context, messages []Message, toolD
 	return res, nil
 }
 
+// GroqProvider wraps Groq Cloud API
+type GroqProvider struct {
+	client *openrouter.Client
+	model  string
+}
+
+func NewGroqProvider(apiKey, model string) *GroqProvider {
+	if model == "" {
+		model = "llama-3.3-70b-versatile"
+	}
+	c := openrouter.NewClient(apiKey, model)
+	return &GroqProvider{
+		client: c,
+		model:  model,
+	}
+}
+
+func (p *GroqProvider) Name() string               { return "groq" }
+func (p *GroqProvider) ModelID() string            { return p.model }
+func (p *GroqProvider) SupportsNativeTools() bool  { return true }
+
+func (p *GroqProvider) Generate(ctx context.Context, messages []Message, toolDefs []tools.ToolDefinition, opts ModelOptions) (*Response, error) {
+	var orMsgs []openrouter.Message
+	for _, m := range messages {
+		var tcs []openrouter.ToolCall
+		for _, tc := range m.ToolCalls {
+			argsBytes, _ := tools.MarshalJSON(tc.Arguments)
+			tcs = append(tcs, openrouter.ToolCall{
+				ID:   tc.ID,
+				Type: "function",
+				Function: openrouter.FunctionCall{
+					Name:      tc.Name,
+					Arguments: string(argsBytes),
+				},
+			})
+		}
+		orMsgs = append(orMsgs, openrouter.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+			ToolCalls:  tcs,
+		})
+	}
+
+	req := openrouter.ChatCompletionRequest{
+		Model:    p.model,
+		Messages: orMsgs,
+	}
+	if len(toolDefs) > 0 {
+		req.Tools = openrouter.ConvertToolDefinitions(toolDefs)
+	}
+
+	resp, err := p.client.Chat(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no response choices returned from groq")
+	}
+
+	choice := resp.Choices[0]
+	res := &Response{
+		Content:      choice.Message.Content,
+		FinishReason: choice.FinishReason,
+	}
+
+	for _, tc := range choice.Message.ToolCalls {
+		var args map[string]interface{}
+		_ = tools.UnmarshalJSON([]byte(tc.Function.Arguments), &args)
+		res.ToolCalls = append(res.ToolCalls, ToolCallRequest{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: args,
+		})
+	}
+
+	return res, nil
+}
+
 // Registry maintains active model providers
 type Registry struct {
 	providers map[string]Provider
