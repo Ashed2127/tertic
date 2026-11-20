@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultModel = "google/gemma-4-31b-it:free"
+	DefaultModel = "nvidia/nemotron-3.5-lightning:free"
 	APIBaseURL   = "https://openrouter.ai/api/v1/chat/completions"
 )
 
