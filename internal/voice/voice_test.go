@@ -18,11 +18,28 @@ func (m *mockEngine) IsAvailable() (bool, string) {
 	}
 	return false, "mock not ready"
 }
-func (m *mockEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
+func (m *mockEngine) StartRecording(ctx context.Context, onStatus func(string)) (*ActiveRecording, error) {
 	if onStatus != nil {
-		onStatus("Mock recording...")
+		onStatus("Mock recording started...")
+	}
+	return &ActiveRecording{
+		AudioPath: "/tmp/mock.wav",
+		stopped:   false,
+	}, nil
+}
+func (m *mockEngine) Transcribe(ctx context.Context, audioPath string, onStatus func(string)) (string, error) {
+	if onStatus != nil {
+		onStatus("Mock transcribing...")
 	}
 	return m.text, nil
+}
+func (m *mockEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
+	rec, err := m.StartRecording(ctx, onStatus)
+	if err != nil {
+		return "", err
+	}
+	_ = rec.Stop()
+	return m.Transcribe(ctx, rec.AudioPath, onStatus)
 }
 
 func TestVoiceManagerModes(t *testing.T) {
@@ -42,20 +59,41 @@ func TestVoiceManagerModes(t *testing.T) {
 	}
 }
 
-func TestMockEngineExecution(t *testing.T) {
+func TestMockEngineManualStopRecording(t *testing.T) {
 	mock := &mockEngine{available: true, text: "Build a calculator in HTML"}
 	var statusMsg string
-	res, err := mock.RecordAndTranscribe(context.Background(), func(s string) {
+	rec, err := mock.StartRecording(context.Background(), func(s string) {
 		statusMsg = s
 	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error starting recording: %v", err)
+	}
+	_ = statusMsg
+
+	// Verify we can stop recording on demand
+	err = rec.Stop()
+	if err != nil {
+		t.Fatalf("unexpected error stopping recording: %v", err)
+	}
+
+	res, err := mock.Transcribe(context.Background(), rec.AudioPath, func(s string) {
+		statusMsg = s
+	})
+	if err != nil {
+		t.Fatalf("unexpected error transcribing: %v", err)
 	}
 	if res != "Build a calculator in HTML" {
 		t.Fatalf("unexpected transcribed text: %q", res)
 	}
-	if statusMsg != "Mock recording..." {
-		t.Fatalf("unexpected status msg: %q", statusMsg)
+}
+
+func TestActiveRecordingDoubleStop(t *testing.T) {
+	rec := &ActiveRecording{AudioPath: "/tmp/test.wav"}
+	if err := rec.Stop(); err != nil {
+		t.Fatalf("first stop failed: %v", err)
+	}
+	if err := rec.Stop(); err != nil {
+		t.Fatalf("second stop should be idempotent: %v", err)
 	}
 }
 

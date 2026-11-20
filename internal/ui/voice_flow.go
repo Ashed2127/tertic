@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"strings"
-	"time"
 
 	"github.com/Ashed2127/tertic/internal/theme"
 	"github.com/Ashed2127/tertic/internal/voice"
@@ -18,7 +18,9 @@ type VoiceSessionResult struct {
 	Submitted bool
 }
 
-// StartVoiceInputFlow leads the user through the interactive voice recording & transcription flow
+// StartVoiceInputFlow leads the user through the interactive voice recording & transcription flow.
+// The user can speak as long as needed; recording only stops when the user presses Enter (or types cancel/stop).
+// Upon pressing Enter, the recording stops immediately, transcribes, and offers instant submission or editing.
 func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *voice.Manager) VoiceSessionResult {
 	th := theme.Current()
 
@@ -46,7 +48,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 
 	for {
 		fmt.Printf("%sEngine:%s %s%s%s\n", th.Bold, th.Reset, th.Primary, activeEng.Name(), th.Reset)
-		fmt.Printf("%sOptions:%s Press [Enter] to start recording (or type 'cancel' / 'exit'): ", th.Muted, th.Reset)
+		fmt.Printf("%sOptions:%s Press [ENTER] to start recording (or type 'cancel' / 'exit'): ", th.Muted, th.Reset)
 		initInput, _ := reader.ReadString('\n')
 		initTrimmed := strings.ToLower(strings.TrimSpace(initInput))
 		if initTrimmed == "cancel" || initTrimmed == "exit" || initTrimmed == "q" {
@@ -54,18 +56,59 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			return VoiceSessionResult{Cancelled: true}
 		}
 
-		// Recording phase
-		recIndicator := NewVoiceIndicator("Listening... Speak your instruction now")
+		// Check if activeEng is termux-speech-to-text directly
+		termuxEng, isTermux := activeEng.(*voice.TermuxAPIEngine)
+		_ = termuxEng
+		_ = isTermux
+
+		recIndicator := NewVoiceIndicator("Recording... Speak your instruction now (Press [ENTER] to stop)")
 		recIndicator.Start()
 
-		recCtx, cancelRec := context.WithTimeout(ctx, 15*time.Second)
-		transcribed, err := activeEng.RecordAndTranscribe(recCtx, func(status string) {
+		recSession, err := activeEng.StartRecording(ctx, func(status string) {
 			recIndicator.Update(status)
 		})
-		cancelRec()
+
+		var transcribed string
+		if err != nil {
+			// Fallback to RecordAndTranscribe single turn
+			transcribed, err = activeEng.RecordAndTranscribe(ctx, func(status string) {
+				recIndicator.Update(status)
+			})
+			recIndicator.Stop("")
+		} else {
+			// Asynchronous stop channel listening for user pressing [ENTER] or typing
+			stopChan := make(chan string, 1)
+			go func() {
+				line, _ := reader.ReadString('\n')
+				stopChan <- strings.TrimSpace(line)
+			}()
+
+			select {
+			case userInput := <-stopChan:
+				recIndicator.Update("Stopping recording & processing audio...")
+				_ = recSession.Stop()
+				if strings.ToLower(userInput) == "cancel" {
+					_ = os.Remove(recSession.AudioPath)
+					recIndicator.StopFailure("Recording cancelled")
+					return VoiceSessionResult{Cancelled: true}
+				}
+			case <-ctx.Done():
+				_ = recSession.Stop()
+				_ = os.Remove(recSession.AudioPath)
+				recIndicator.StopFailure("Recording context cancelled")
+				return VoiceSessionResult{Cancelled: true}
+			}
+
+			recIndicator.Update("Transcribing recorded speech...")
+			transcribed, err = activeEng.Transcribe(ctx, recSession.AudioPath, func(s string) {
+				recIndicator.Update(s)
+			})
+			_ = os.Remove(recSession.AudioPath)
+			recIndicator.Stop("")
+		}
 
 		if err != nil {
-			recIndicator.StopFailure("Speech capture failed: " + err.Error())
+			fmt.Printf("%s✖ Speech capture failed: %v%s\n", th.Error, err, th.Reset)
 			fmt.Printf("\n%sTry again? (y/n):%s ", th.Warning, th.Reset)
 			retryAns, _ := reader.ReadString('\n')
 			if strings.ToLower(strings.TrimSpace(retryAns)) == "y" {
@@ -73,8 +116,6 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			}
 			return VoiceSessionResult{Cancelled: true}
 		}
-
-		recIndicator.StopSuccess("Transcription complete")
 
 		transcribed = strings.TrimSpace(transcribed)
 		if transcribed == "" {
@@ -93,7 +134,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 		fmt.Printf("%s────────────────────────────────────────────────%s\n\n", th.Border, th.Reset)
 
 		reviewOpts := []string{
-			"1) Submit instruction to Tertic agent",
+			"1) Submit instruction to Tertic agent (Enter)",
 			"2) Edit transcription using keyboard",
 			"3) Record again",
 			"4) Cancel and return",
