@@ -251,6 +251,11 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 	}
 
 	// 2. Transcribe via Google Speech Recognition API (FLAC/WAV standard protocol used by SpeechRecognition)
+	speechKey := os.Getenv("GOOGLE_SPEECH_API_KEY")
+	if speechKey == "" {
+		speechKey = os.Getenv("GEMINI_API_KEY")
+	}
+
 	if onStatus != nil {
 		onStatus("Transcribing with Speech Recognition API...")
 	}
@@ -270,9 +275,12 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		return "", fmt.Errorf("failed to read audio file: %w", err)
 	}
 
-	// Google Speech Recognition v1 endpoint (public key standard used by mobile clients)
-	url := "https://www.google.com/speech-api/v2/recognize?output=json&lang=en-US&key=AIzaSyA_Z9D22v_bX2gW8sYF6P5-m8qQv0X2b7c"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(audioBytes)))
+	// Google Speech Recognition endpoint - uses key from environment variable if configured
+	endpoint := "https://www.google.com/speech-api/v2/recognize?output=json&lang=en-US"
+	if speechKey != "" {
+		endpoint += "&key=" + speechKey
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(audioBytes)))
 	if err != nil {
 		return "", err
 	}
