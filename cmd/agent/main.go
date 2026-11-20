@@ -11,9 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/Ashed2127/tertic/internal/agent"
 	"github.com/Ashed2127/tertic/internal/gemini"
@@ -21,30 +19,11 @@ import (
 	"github.com/Ashed2127/tertic/internal/ollama"
 	"github.com/Ashed2127/tertic/internal/openrouter"
 	"github.com/Ashed2127/tertic/internal/orchestrator"
+	"github.com/Ashed2127/tertic/internal/theme"
 	"github.com/Ashed2127/tertic/internal/tools"
+	"github.com/Ashed2127/tertic/internal/ui"
+	"github.com/Ashed2127/tertic/internal/voice"
 )
-
-// ANSI colors & styling
-const (
-	ColorReset  = "\033[0m"
-	ColorBold   = "\033[1m"
-	ColorDim    = "\033[2m"
-	ColorRed    = "\033[31m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorBlue   = "\033[34m"
-	ColorPurple = "\033[35m"
-	ColorCyan   = "\033[36m"
-)
-
-const Banner = `
-  _____         _   _      
- |_   _|__ _ __| |_(_) ___ 
-   | |/ _ \ '__| __| |/ __|
-   | |  __/ |  | |_| | (__ 
-   |_|\___|_|   \__|_|\___|
- Autonomous AI Coding Agent for Termux
-`
 
 const SystemPrompt = `You are Tertic, an elite autonomous software engineering agent running natively inside Termux on Android. You operate as a tightly coordinated multi-agent system (Coordinator → Planner → Researcher → Developer → Reviewer). Your sole mission is to deliver working, verified software with maximum reliability and minimum wasted steps.
 
@@ -68,151 +47,7 @@ For every non-trivial task:
 When the user greets you or asks conversational questions, reply with normal concise text.
 Do not output long hypothetical step lists or code blocks—directly invoke the necessary tools, build, verify, open if applicable, and deliver working code.`
 
-// Motion Spinner
-type Spinner struct {
-	frames  []string
-	msg     string
-	stop    chan struct{}
-	mu      sync.Mutex
-	wg      sync.WaitGroup
-	enabled bool
-}
-
 var verboseProcess = false // When true, shows tool execution details & previews; when false, clean concise mode
-
-func NewSpinner(msg string) *Spinner {
-	cleanMsg := msg
-	if len(cleanMsg) > 60 {
-		cleanMsg = cleanMsg[:57] + "..."
-	}
-	return &Spinner{
-		// Fluid sine-wave Bold "T" with high-definition RGB easing from left to right
-		frames: []string{
-			"\033[38;2;15;45;60m\033[1mT\033[0m   ",
-			"\033[38;2;54;85;98m\033[1mT\033[0m   ",
-			"\033[38;2;93;125;134m\033[1mT\033[0m   ",
-			"\033[38;2;128;161;168m\033[1mT\033[0m   ",
-			"\033[38;2;159;193;197m\033[1mT\033[0m   ",
-			" \033[38;2;185;219;222m\033[1mT\033[0m  ",
-			" \033[38;2;204;239;240m\033[1mT\033[0m  ",
-			" \033[38;2;216;250;251m\033[1mT\033[0m  ",
-			"  \033[38;2;220;255;255m\033[1mT\033[0m ",
-			"  \033[38;2;216;250;251m\033[1mT\033[0m ",
-			"  \033[38;2;204;239;240m\033[1mT\033[0m ",
-			"  \033[38;2;185;219;222m\033[1mT\033[0m ",
-			"   \033[38;2;159;193;197m\033[1mT\033[0m",
-			"   \033[38;2;128;161;168m\033[1mT\033[0m",
-			"   \033[38;2;93;125;134m\033[1mT\033[0m",
-			"   \033[38;2;54;85;98m\033[1mT\033[0m",
-			"    ",
-		},
-		msg:     cleanMsg,
-		stop:    make(chan struct{}),
-		enabled: true,
-	}
-}
-
-func (s *Spinner) Start() {
-	if !s.enabled {
-		return
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		i := 0
-		for {
-			select {
-			case <-s.stop:
-				fmt.Print("\r\033[2K")
-				return
-			default:
-				s.mu.Lock()
-				m := s.msg
-				s.mu.Unlock()
-				frame := s.frames[i%len(s.frames)]
-				fmt.Printf("\r\033[2K%s \033[38;2;140;185;200m%s\033[0m", frame, m)
-				i++
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
-	}()
-}
-
-func (s *Spinner) Stop(finalMsg string) {
-	if !s.enabled {
-		return
-	}
-	close(s.stop)
-	s.wg.Wait()
-	if finalMsg != "" {
-		fmt.Printf("\r\033[2K%s\n", finalMsg)
-	} else {
-		// Clean fade-out motion on complete
-		s.mu.Lock()
-		oldMsg := s.msg
-		s.mu.Unlock()
-		fadeSteps := []int{160, 100, 40}
-		for _, v := range fadeSteps {
-			fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v/2, v/2, v, v, v, oldMsg, ColorReset)
-			time.Sleep(14 * time.Millisecond)
-		}
-		fmt.Print("\r\033[2K")
-	}
-}
-
-func (s *Spinner) StopSuccess(msg string) {
-	s.Stop(fmt.Sprintf("%s✔%s %s%s%s", ColorGreen, ColorReset, ColorBold, msg, ColorReset))
-}
-
-func (s *Spinner) StopFailure(msg string) {
-	s.Stop(fmt.Sprintf("%s✖%s %s%s%s", ColorRed, ColorReset, ColorBold, msg, ColorReset))
-}
-
-func (s *Spinner) UpdateMessage(newMsg string) {
-	if !s.enabled {
-		return
-	}
-	cleanMsg := newMsg
-	if len(cleanMsg) > 60 {
-		cleanMsg = cleanMsg[:57] + "..."
-	}
-	s.mu.Lock()
-	s.msg = cleanMsg
-	s.mu.Unlock()
-}
-
-// TransitionTo smoothly transitions the spinner message with a fluid fade-out/fade-in wave
-func (s *Spinner) TransitionTo(newMsg string) {
-	if !s.enabled {
-		return
-	}
-	cleanMsg := newMsg
-	if len(cleanMsg) > 60 {
-		cleanMsg = cleanMsg[:57] + "..."
-	}
-
-	s.mu.Lock()
-	oldMsg := s.msg
-	s.mu.Unlock()
-
-	// Smoothly fade-out previous step text
-	fadeSteps := []int{180, 120, 60, 10}
-	for _, v := range fadeSteps {
-		fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v/2, v/2, v, v, v, oldMsg, ColorReset)
-		time.Sleep(16 * time.Millisecond)
-	}
-
-	s.mu.Lock()
-	s.msg = cleanMsg
-	s.mu.Unlock()
-
-	// Smoothly fade-in new step text
-	fadeUpSteps := []int{20, 80, 140, 210}
-	for _, v := range fadeUpSteps {
-		fmt.Printf("\r\033[2K\033[38;2;%d;%d;%dm\033[1mT\033[0m   \033[38;2;%d;%d;%dm%s%s", v/2, v, v, v, v, v, cleanMsg, ColorReset)
-		time.Sleep(16 * time.Millisecond)
-	}
-}
 
 func getBuiltinOpenRouterKey() string {
 	b, err := base64.StdEncoding.DecodeString("c2stb3ItdjEtZjQxZDM5MmQxZDMwZDE3MjVjNGIwNWQ0NzA0NjkwYmRiNTgwZmFjYTViMjE2ODU5M2IwYzZjZmRiYzE1YjVlNg==")
@@ -229,109 +64,34 @@ type AgentConfig struct {
 	Host     string
 }
 
-// Arrow Key Interactive Selector
-func selectInteractive(title string, options []string) int {
-	fd := int(os.Stdin.Fd())
-	var oldState syscall.Termios
-	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
-	raw := oldState
-	raw.Lflag &^= (syscall.ICANON | syscall.ECHO)
-	_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&raw)), 0, 0, 0)
-
-	defer func() {
-		_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafePointer(&oldState)), 0, 0, 0)
-		fmt.Print("\033[?25h") // Show cursor
-	}()
-
-	fmt.Print("\033[?25l") // Hide cursor
-	selected := 0
-
-	render := func() {
-		fmt.Printf("\r\033[%dA", len(options)+1) // move up
-		fmt.Printf("%s%s%s\n", ColorBold, title, ColorReset)
-		for i, opt := range options {
-			if i == selected {
-				fmt.Printf("\r\033[K %s%s❯ %s%s\n", ColorBold, ColorGreen, opt, ColorReset)
-			} else {
-				fmt.Printf("\r\033[K   %s%s%s\n", ColorDim, opt, ColorReset)
-			}
-		}
-	}
-
-	fmt.Printf("%s%s%s\n", ColorBold, title, ColorReset)
-	for i, opt := range options {
-		if i == selected {
-			fmt.Printf(" %s%s❯ %s%s\n", ColorBold, ColorGreen, opt, ColorReset)
-		} else {
-			fmt.Printf("   %s%s%s\n", ColorDim, opt, ColorReset)
-		}
-	}
-
-	buf := make([]byte, 3)
-	for {
-		n, err := os.Stdin.Read(buf)
-		if err != nil {
-			break
-		}
-
-		if n == 1 {
-			if buf[0] == '\n' || buf[0] == '\r' {
-				break
-			}
-			if buf[0] == 3 { // Ctrl+C
-				os.Exit(0)
-			}
-		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
-			switch buf[2] {
-			case 'A': // UP arrow
-				if selected > 0 {
-					selected--
-					render()
-				}
-			case 'B': // DOWN arrow
-				if selected < len(options)-1 {
-					selected++
-					render()
-				}
-			}
-		}
-	}
-	fmt.Println()
-	return selected
-}
-
-func unsafePointer(t *syscall.Termios) uintptr {
-	return uintptr(unsafe.Pointer(t))
-}
-
 // Config resolution
 func resolveConfig() (*AgentConfig, error) {
 	if p := os.Getenv("TERTIC_PROVIDER"); p == "ollama" {
-		model := os.Getenv("OLLAMA_MODEL")
-		if model == "" {
-			model = "qwen2.5-coder:0.5b"
+		m := os.Getenv("OLLAMA_MODEL")
+		if m == "" {
+			m = "qwen2.5-coder:0.5b"
 		}
 		host := os.Getenv("OLLAMA_HOST")
 		if host == "" {
 			host = ollama.DefaultHost
 		}
-		return &AgentConfig{Provider: "ollama", Model: model, Host: host}, nil
+		return &AgentConfig{Provider: "ollama", Model: m, Host: host}, nil
 	}
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); strings.TrimSpace(key) != "" {
-		model := os.Getenv("OPENROUTER_MODEL")
-		if model == "" {
-			model = openrouter.DefaultModel
+		m := os.Getenv("OPENROUTER_MODEL")
+		if m == "" {
+			m = openrouter.DefaultModel
 		}
-		return &AgentConfig{Provider: "openrouter", APIKey: strings.TrimSpace(key), Model: model}, nil
+		return &AgentConfig{Provider: "openrouter", APIKey: strings.TrimSpace(key), Model: m}, nil
 	}
 
 	if key := os.Getenv("GEMINI_API_KEY"); strings.TrimSpace(key) != "" {
-		model := os.Getenv("GEMINI_MODEL")
-		if model == "" {
-			model = gemini.DefaultModel
+		m := os.Getenv("GEMINI_MODEL")
+		if m == "" {
+			m = gemini.DefaultModel
 		}
-		return &AgentConfig{Provider: "gemini", APIKey: strings.TrimSpace(key), Model: model}, nil
+		return &AgentConfig{Provider: "gemini", APIKey: strings.TrimSpace(key), Model: m}, nil
 	}
 
 	home, _ := os.UserHomeDir()
@@ -394,7 +154,7 @@ func resolveConfig() (*AgentConfig, error) {
 		"1) Cloud API Key (Pre-configured OpenRouter or Google Gemini)",
 		"2) Local AI Model (100% Offline via Ollama on device)",
 	}
-	modeChoice := selectInteractive("[Tertic Setup] Choose Execution Mode (Use ↑/↓ arrows & Enter):", modeOptions)
+	modeChoice := ui.SelectInteractiveWithTheme("[Tertic Setup] Choose Execution Mode (Use ↑/↓ arrows & Enter):", modeOptions)
 
 	configFile := ""
 	if home != "" {
@@ -408,7 +168,7 @@ func resolveConfig() (*AgentConfig, error) {
 			"OpenRouter (Free Cloud Key pre-configured)",
 			"Google Gemini API (Enter your own key)",
 		}
-		apiChoice := selectInteractive("Choose Cloud Provider:", apiOptions)
+		apiChoice := ui.SelectInteractiveWithTheme("Choose Cloud Provider:", apiOptions)
 
 		if apiChoice == 0 {
 			if configFile != "" {
@@ -440,15 +200,16 @@ func resolveConfig() (*AgentConfig, error) {
 		modelOptions = append(modelOptions, fmt.Sprintf("%-22s [%-6s] - %s", m.ID, m.Size, m.Description))
 	}
 
-	selectedModelIdx := selectInteractive("Select Local Model to Download & Run (Use ↑/↓ arrows & Enter):", modelOptions)
+	selectedModelIdx := ui.SelectInteractiveWithTheme("Select Local Model to Download & Run (Use ↑/↓ arrows & Enter):", modelOptions)
 	chosenModel := ollama.AvailableLocalModels[selectedModelIdx]
 
-	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorCyan, ColorReset)
-	fmt.Printf("%sSelected Local Model:%s %s%s%s (%s)\n", ColorBold, ColorReset, ColorGreen, chosenModel.ID, ColorReset, chosenModel.Size)
-	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorCyan, ColorReset)
+	th := theme.Current()
+	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", th.Border, th.Reset)
+	fmt.Printf("%sSelected Local Model:%s %s%s%s (%s)\n", th.Bold, th.Reset, th.Success, chosenModel.ID, th.Reset, chosenModel.Size)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", th.Border, th.Reset)
 
 	if _, err := exec.LookPath("ollama"); err != nil {
-		fmt.Printf("%sInstalling Ollama on Termux/Linux...%s\n", ColorYellow, ColorReset)
+		fmt.Printf("%sInstalling Ollama on Termux/Linux...%s\n", th.Warning, th.Reset)
 		installCmd := exec.Command("bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh || pkg install -y ollama || true")
 		installCmd.Stdout = os.Stdout
 		installCmd.Stderr = os.Stderr
@@ -457,19 +218,19 @@ func resolveConfig() (*AgentConfig, error) {
 
 	ollama.EnsureOllamaRunning()
 
-	pullSpinner := NewSpinner(fmt.Sprintf("Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
-	pullSpinner.Start()
+	pullIndicator := ui.NewIndicator(fmt.Sprintf("Downloading %s (%s)...", chosenModel.ID, chosenModel.Size))
+	pullIndicator.Start()
 	pullCmd := exec.Command("ollama", "pull", chosenModel.ID)
 	_ = pullCmd.Run()
-	pullSpinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosenModel.ID, ColorReset))
+	pullIndicator.StopSuccess(fmt.Sprintf("Model %s ready!", chosenModel.ID))
 
 	if configFile != "" {
 		_ = os.WriteFile(configFile, []byte(fmt.Sprintf("export TERTIC_PROVIDER=\"ollama\"\nexport OLLAMA_MODEL=\"%s\"\nexport OLLAMA_HOST=\"%s\"\n", chosenModel.ID, ollama.DefaultHost)), 0600)
 	}
 
-	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
-	fmt.Printf("%sSetup Complete! Ask Tertic anything below to begin coding.%s\n", ColorBold, ColorReset)
-	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
+	fmt.Printf("\n%s══════════════════════════════════════════════════════════%s\n", th.Success, th.Reset)
+	fmt.Printf("%sSetup Complete! Ask Tertic anything below to begin coding.%s\n", th.Bold, th.Reset)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", th.Success, th.Reset)
 
 	return &AgentConfig{
 		Provider: "ollama",
@@ -487,10 +248,9 @@ func switchModelInteractive(cfg *AgentConfig) {
 		"3) 🔑 Change / Enter API Key",
 	}
 
-	catChoice := selectInteractive("What would you like to switch to? (Use ↑/↓ arrows & Enter):", categoryOpts)
+	catChoice := ui.SelectInteractiveWithTheme("What would you like to switch to? (Use ↑/↓ arrows & Enter):", categoryOpts)
 
 	if catChoice == 0 {
-		// Switch to Cloud Models
 		cloudOpts := []string{
 			"Google Gemini 3.1 Flash-Lite (High speed, Free tier)",
 			"Google Gemini 3 Flash Preview (Reasoning & Full tools)",
@@ -499,7 +259,7 @@ func switchModelInteractive(cfg *AgentConfig) {
 			"OpenRouter: Qwen 2.5 Coder 32B (Free remote coding)",
 			"OpenRouter: DeepSeek R1 (Free remote reasoning)",
 		}
-		cIdx := selectInteractive("Select Cloud Model to Use:", cloudOpts)
+		cIdx := ui.SelectInteractiveWithTheme("Select Cloud Model to Use:", cloudOpts)
 		switch cIdx {
 		case 0:
 			cfg.Provider = "gemini"
@@ -534,42 +294,41 @@ func switchModelInteractive(cfg *AgentConfig) {
 		}
 
 	} else if catChoice == 1 {
-		// Switch to Local Ollama Models
 		cfg.Provider = "ollama"
 		if cfg.Host == "" {
 			cfg.Host = ollama.DefaultHost
 		}
 		models, err := ollama.GetDownloadedModels(cfg.Host)
 		if err != nil || len(models) == 0 {
-			fmt.Printf("%s[Info] No downloaded models found. Choose one to pull:%s\n", ColorYellow, ColorReset)
+			fmt.Printf("%s[Info] No downloaded models found. Choose one to pull:%s\n", theme.Current().Warning, theme.Current().Reset)
 			var opts []string
 			for _, m := range ollama.AvailableLocalModels {
 				opts = append(opts, fmt.Sprintf("%-22s [%-6s]", m.ID, m.Size))
 			}
-			idx := selectInteractive("Choose Model to Pull & Use (Use ↑/↓ arrows & Enter):", opts)
+			idx := ui.SelectInteractiveWithTheme("Choose Model to Pull & Use (Use ↑/↓ arrows & Enter):", opts)
 			chosen := ollama.AvailableLocalModels[idx].ID
 
-			spinner := NewSpinner("Pulling model: " + chosen)
-			spinner.Start()
+			indicator := ui.NewIndicator("Pulling model: " + chosen)
+			indicator.Start()
 			_ = exec.Command("ollama", "pull", chosen).Run()
-			spinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosen, ColorReset))
+			indicator.StopSuccess(fmt.Sprintf("Model %s ready!", chosen))
 			cfg.Model = chosen
 		} else {
 			opts := append(models, "+ Download another model...")
-			idx := selectInteractive("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
+			idx := ui.SelectInteractiveWithTheme("Select Installed Model to Switch to (Use ↑/↓ arrows & Enter):", opts)
 
 			if idx == len(models) {
 				var newOpts []string
 				for _, m := range ollama.AvailableLocalModels {
 					newOpts = append(newOpts, fmt.Sprintf("%-22s [%-6s]", m.ID, m.Size))
 				}
-				newIdx := selectInteractive("Select Model to Download:", newOpts)
+				newIdx := ui.SelectInteractiveWithTheme("Select Model to Download:", newOpts)
 				chosen := ollama.AvailableLocalModels[newIdx].ID
 
-				spinner := NewSpinner("Pulling model: " + chosen)
-				spinner.Start()
+				indicator := ui.NewIndicator("Pulling model: " + chosen)
+				indicator.Start()
 				_ = exec.Command("ollama", "pull", chosen).Run()
-				spinner.Stop(fmt.Sprintf("%sModel %s ready!%s", ColorGreen, chosen, ColorReset))
+				indicator.StopSuccess(fmt.Sprintf("Model %s ready!", chosen))
 				cfg.Model = chosen
 			} else {
 				parts := strings.Fields(models[idx])
@@ -580,12 +339,11 @@ func switchModelInteractive(cfg *AgentConfig) {
 		}
 
 	} else {
-		// Change API Key option
 		keyOpts := []string{
 			"Google Gemini API Key",
 			"OpenRouter API Key",
 		}
-		kIdx := selectInteractive("Which API Key do you want to provide?", keyOpts)
+		kIdx := ui.SelectInteractiveWithTheme("Which API Key do you want to provide?", keyOpts)
 		reader := bufio.NewReader(os.Stdin)
 		if kIdx == 0 {
 			fmt.Print("\nEnter your Google Gemini API Key: ")
@@ -615,86 +373,10 @@ func switchModelInteractive(cfg *AgentConfig) {
 		}
 	}
 
-	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n", ColorGreen, ColorReset)
-	fmt.Printf("%sActive Mode:%s %s%s%s | %sModel:%s %s%s%s\n", ColorBold, ColorReset, ColorYellow, cfg.Provider, ColorReset, ColorBold, ColorReset, ColorCyan, cfg.Model, ColorReset)
-	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", ColorGreen, ColorReset)
-}
-
-func printStreamed(text string) {
-	if text == "" {
-		return
-	}
-	words := strings.FieldsFunc(text, func(r rune) bool {
-		return r == ' ' || r == '\n'
-	})
-	_ = words
-
-	// Stream rune by rune / token with micro delays for live typewriter output
-	runes := []rune(text)
-	for i := 0; i < len(runes); i++ {
-		fmt.Print(string(runes[i]))
-		if runes[i] == '\n' {
-			time.Sleep(15 * time.Millisecond)
-		} else if runes[i] == '.' || runes[i] == '!' || runes[i] == '?' {
-			time.Sleep(12 * time.Millisecond)
-		} else {
-			time.Sleep(5 * time.Millisecond)
-		}
-	}
-	fmt.Println()
-}
-
-func formatActionMessage(name string, args map[string]interface{}) string {
-	cmd := ""
-	if c, ok := args["command"].(string); ok {
-		cmd = strings.ToLower(c)
-	}
-	path := ""
-	if p, ok := args["path"].(string); ok {
-		path = filepath.Base(p)
-	}
-
-	switch name {
-	case "execute_bash":
-		if strings.Contains(cmd, "install") || strings.Contains(cmd, "npm i") || strings.Contains(cmd, "pip i") || strings.Contains(cmd, "pkg in") || strings.Contains(cmd, "apt in") || strings.Contains(cmd, "go get") {
-			return "Installing packages..."
-		}
-		if strings.Contains(cmd, "am start") || strings.Contains(cmd, "termux-open") || strings.Contains(cmd, "xdg-open") || strings.Contains(cmd, "open ") {
-			return "Opening application..."
-		}
-		if strings.Contains(cmd, "mkdir") || strings.Contains(cmd, " mv ") || strings.Contains(cmd, " cp ") || strings.Contains(cmd, " rm ") {
-			return "Organizing files..."
-		}
-		if strings.Contains(cmd, "chmod") || strings.Contains(cmd, "config") || strings.Contains(cmd, "setup") || strings.Contains(cmd, "export") {
-			return "Configuring environment..."
-		}
-		if strings.Contains(cmd, "build") || strings.Contains(cmd, "make") || strings.Contains(cmd, "compile") {
-			return "Building project..."
-		}
-		if strings.Contains(cmd, "test") || strings.Contains(cmd, "check") {
-			return "Testing & verifying..."
-		}
-		return "Executing command..."
-	case "write_file":
-		if path != "" {
-			return fmt.Sprintf("Writing %s...", path)
-		}
-		return "Writing code..."
-	case "edit_file":
-		if path != "" {
-			return fmt.Sprintf("Editing %s...", path)
-		}
-		return "Refactoring code..."
-	case "read_file":
-		if path != "" {
-			return fmt.Sprintf("Reading %s...", path)
-		}
-		return "Reading code..."
-	case "list_dir":
-		return "Inspecting files..."
-	default:
-		return "Processing..."
-	}
+	th := theme.Current()
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n", th.Success, th.Reset)
+	fmt.Printf("%sActive Mode:%s %s%s%s │ %sModel:%s %s%s%s\n", th.Bold, th.Reset, th.Warning, cfg.Provider, th.Reset, th.Bold, th.Reset, th.Primary, cfg.Model, th.Reset)
+	fmt.Printf("%s══════════════════════════════════════════════════════════%s\n\n", th.Success, th.Reset)
 }
 
 func isCodingTask(prompt string) bool {
@@ -783,15 +465,15 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 			Tools:    openRouterTools,
 		}
 
-		spinner := NewSpinner("Thinking & planning...")
-		spinner.Start()
+		indicator := ui.NewIndicator("Thinking & planning...")
+		indicator.Start()
 
 		resp, err := client.Chat(req)
 		if err != nil {
-			spinner.Stop(fmt.Sprintf("%sError: %v%s", ColorRed, err, ColorReset))
+			indicator.Stop(fmt.Sprintf("%sError: %v%s", theme.Current().Error, err, theme.Current().Reset))
 			return err
 		}
-		spinner.Stop("")
+		indicator.Stop("")
 
 		choice := resp.Choices[0]
 		assistantMsg := choice.Message
@@ -807,7 +489,7 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				},
 			})
 		} else if len(assistantMsg.ToolCalls) == 0 && assistantMsg.Content != "" {
-			printStreamed(assistantMsg.Content)
+			ui.StreamTypewriter(assistantMsg.Content)
 		}
 
 		if len(assistantMsg.ToolCalls) == 0 {
@@ -831,31 +513,32 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				actionDesc = p
 			}
 
-			taskLabel := formatActionMessage(fn.Name, args)
-			toolSpinner := NewSpinner(taskLabel)
-			toolSpinner.Start()
+			taskLabel := ui.FormatActionHumanReadable(fn.Name, args)
+			toolIndicator := ui.NewIndicator(taskLabel)
+			toolIndicator.Start()
 
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
+			th := theme.Current()
 			if toolErr != nil {
 				if verboseProcess {
-					toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, fn.Name, toolErr, ColorReset))
+					toolIndicator.Stop(fmt.Sprintf("%s[%s failed]: %v%s", th.Error, fn.Name, toolErr, th.Reset))
 				} else {
-					toolSpinner.StopFailure(fmt.Sprintf("%s failed", taskLabel))
+					toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 				}
 				output = fmt.Sprintf("Error: %v", toolErr)
 			} else {
 				if verboseProcess {
-					toolSpinner.Stop(fmt.Sprintf("%s%s [%s]:%s %s", ColorBold, ColorGreen, fn.Name, ColorReset, actionDesc))
+					toolIndicator.Stop(fmt.Sprintf("%s%s [%s]:%s %s", th.Bold, th.Success, fn.Name, th.Reset, actionDesc))
 					lines := strings.Split(output, "\n")
 					preview := output
 					if len(lines) > 4 {
-						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
+						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", th.Muted, len(lines)-4, th.Reset)
 					}
 					if strings.TrimSpace(preview) != "" {
-						fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+						fmt.Printf("%s%s%s\n", th.Primary, preview, th.Reset)
 					}
 				} else {
-					toolSpinner.StopSuccess(taskLabel)
+					toolIndicator.StopSuccess(taskLabel)
 				}
 			}
 
@@ -900,15 +583,15 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 	for step := 1; step <= maxSteps; step++ {
 		req.Contents = *history
 
-		spinner := NewSpinner("Thinking & planning...")
-		spinner.Start()
+		indicator := ui.NewIndicator("Thinking & planning...")
+		indicator.Start()
 
 		resp, err := client.Generate(req)
 		if err != nil {
-			spinner.Stop(fmt.Sprintf("%sError: %v%s", ColorRed, err, ColorReset))
+			indicator.Stop(fmt.Sprintf("%sError: %v%s", theme.Current().Error, err, theme.Current().Reset))
 			return err
 		}
-		spinner.Stop("")
+		indicator.Stop("")
 
 		candidate := resp.Candidates[0]
 		*history = append(*history, candidate.Content)
@@ -918,7 +601,7 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 
 		for _, part := range candidate.Content.Parts {
 			if part.FunctionCall == nil && part.Text != "" {
-				printStreamed(part.Text)
+				ui.StreamTypewriter(part.Text)
 			}
 
 			if part.FunctionCall != nil {
@@ -932,31 +615,32 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 					actionDesc = p
 				}
 
-				taskLabel := formatActionMessage(call.Name, call.Args)
-				toolSpinner := NewSpinner(taskLabel)
-				toolSpinner.Start()
+				taskLabel := ui.FormatActionHumanReadable(call.Name, call.Args)
+				toolIndicator := ui.NewIndicator(taskLabel)
+				toolIndicator.Start()
 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
+				th := theme.Current()
 				if toolErr != nil {
 					if verboseProcess {
-						toolSpinner.Stop(fmt.Sprintf("%s[%s failed]: %v%s", ColorRed, call.Name, toolErr, ColorReset))
+						toolIndicator.Stop(fmt.Sprintf("%s[%s failed]: %v%s", th.Error, call.Name, toolErr, th.Reset))
 					} else {
-						toolSpinner.StopFailure(fmt.Sprintf("%s failed", taskLabel))
+						toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 					}
 					output = fmt.Sprintf("Error: %v", toolErr)
 				} else {
 					if verboseProcess {
-						toolSpinner.Stop(fmt.Sprintf("%s%s [%s]:%s %s", ColorBold, ColorGreen, call.Name, ColorReset, actionDesc))
+						toolIndicator.Stop(fmt.Sprintf("%s%s [%s]:%s %s", th.Bold, th.Success, call.Name, th.Reset, actionDesc))
 						lines := strings.Split(output, "\n")
 						preview := output
 						if len(lines) > 4 {
-							preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", ColorDim, len(lines)-4, ColorReset)
+							preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", th.Muted, len(lines)-4, th.Reset)
 						}
 						if strings.TrimSpace(preview) != "" {
-							fmt.Printf("%s%s%s\n", ColorCyan, preview, ColorReset)
+							fmt.Printf("%s%s%s\n", th.Primary, preview, th.Reset)
 						}
 					} else {
-						toolSpinner.StopSuccess(taskLabel)
+						toolIndicator.StopSuccess(taskLabel)
 					}
 				}
 
@@ -984,22 +668,25 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 }
 
 func main() {
-	// First check informational subcommands before triggering interactive setup
 	agentReg := agent.NewRegistry()
+	voiceMgr := voice.NewManager()
+
+	// Direct CLI arguments / subcommands
 	if len(os.Args) > 1 {
 		sub := strings.ToLower(os.Args[1])
 		if sub == "agents" {
+			th := theme.Current()
 			if len(os.Args) > 2 && os.Args[2] == "status" {
-				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", ColorBold, ColorReset)
+				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", th.Bold, th.Reset)
 				for _, ag := range agentReg.List() {
-					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s | Tools: %v\n", ag.Name(), ag.Role(), ColorGreen, ColorReset, ag.AllowedTools())
+					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s │ Tools: %v\n", ag.Name(), ag.Role(), th.Success, th.Reset, ag.AllowedTools())
 				}
 				fmt.Println()
 				return
 			}
-			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", th.Bold, th.Reset)
 			for _, ag := range agentReg.List() {
-				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
+				fmt.Printf(" • %s%-12s%s ─ %s\n", th.Bold, ag.Role(), th.Reset, ag.Description())
 			}
 			fmt.Println()
 			return
@@ -1008,7 +695,7 @@ func main() {
 
 	cfg, err := resolveConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", ColorRed, err, ColorReset)
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", theme.Current().Error, err, theme.Current().Reset)
 		os.Exit(1)
 	}
 
@@ -1021,7 +708,17 @@ func main() {
 	var multiAgentEngine *orchestrator.Engine
 	modelReg := model.NewRegistry()
 
-	var stopMultiAgentProgress func(finalMsg string)
+	var activeIndicator *ui.Indicator
+	var activeIndicatorMu sync.Mutex
+
+	stopMultiAgentProgress := func(finalMsg string) {
+		activeIndicatorMu.Lock()
+		defer activeIndicatorMu.Unlock()
+		if activeIndicator != nil {
+			activeIndicator.Stop(finalMsg)
+			activeIndicator = nil
+		}
+	}
 
 	initClients := func() {
 		chatClient = nil
@@ -1056,9 +753,6 @@ func main() {
 			modelReg.Register(ag.Name(), primaryProvider)
 		}
 
-		var activeProgressSpinner *Spinner
-		var activeProgressMu sync.Mutex
-
 		multiAgentEngine = orchestrator.NewEngine(agentReg, modelReg, orchestrator.Config{
 			MaxConcurrentAgents: 1, // Sequential execution for low-RAM Android/Termux
 			SequentialOnly:      true,
@@ -1066,25 +760,16 @@ func main() {
 				if role != "Action" && role != "Thinking" {
 					return
 				}
-				activeProgressMu.Lock()
-				defer activeProgressMu.Unlock()
-				if activeProgressSpinner == nil {
-					activeProgressSpinner = NewSpinner(status)
-					activeProgressSpinner.Start()
+				activeIndicatorMu.Lock()
+				defer activeIndicatorMu.Unlock()
+				if activeIndicator == nil {
+					activeIndicator = ui.NewIndicator(status)
+					activeIndicator.Start()
 				} else {
-					activeProgressSpinner.TransitionTo(status)
+					activeIndicator.Update(status)
 				}
 			},
 		})
-
-		stopMultiAgentProgress = func(finalMsg string) {
-			activeProgressMu.Lock()
-			defer activeProgressMu.Unlock()
-			if activeProgressSpinner != nil {
-				activeProgressSpinner.Stop(finalMsg)
-				activeProgressSpinner = nil
-			}
-		}
 	}
 
 	initClients()
@@ -1100,29 +785,32 @@ func main() {
 		}
 	}
 
+	// Direct non-interactive execution
 	if len(filteredArgs) > 0 {
 		userPrompt := strings.Join(filteredArgs, " ")
 		subCmd := strings.ToLower(filteredArgs[0])
 
 		if subCmd == "agents" {
+			th := theme.Current()
 			if len(filteredArgs) > 1 && filteredArgs[1] == "status" {
-				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", ColorBold, ColorReset)
+				fmt.Printf("\n%sTertic Agent Mesh Status:%s\n", th.Bold, th.Reset)
 				for _, ag := range agentReg.List() {
-					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s | Allowed: %v\n", ag.Name(), ag.Role(), ColorGreen, ColorReset, ag.AllowedTools())
+					fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s │ Allowed: %v\n", ag.Name(), ag.Role(), th.Success, th.Reset, ag.AllowedTools())
 				}
 				fmt.Println()
 				return
 			}
-			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", th.Bold, th.Reset)
 			for _, ag := range agentReg.List() {
-				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
+				fmt.Printf(" • %s%-12s%s ─ %s\n", th.Bold, ag.Role(), th.Reset, ag.Description())
 			}
 			fmt.Println()
 			return
 		}
 
 		if subCmd == "models" {
-			fmt.Printf("\n%sConfigured Model Providers:%s\n", ColorBold, ColorReset)
+			th := theme.Current()
+			fmt.Printf("\n%sConfigured Model Providers:%s\n", th.Bold, th.Reset)
 			for _, m := range modelReg.List() {
 				fmt.Printf(" • %s\n", m)
 			}
@@ -1131,51 +819,71 @@ func main() {
 		}
 
 		if subCmd == "config" {
-			fmt.Printf("\n%sActive Model Configuration:%s\n", ColorBold, ColorReset)
+			th := theme.Current()
+			fmt.Printf("\n%sActive Model Configuration:%s\n", th.Bold, th.Reset)
 			fmt.Printf(" Provider: %s\n Model:    %s\n Mode:     Sequential Android (4GB RAM safe)\n\n", cfg.Provider, cfg.Model)
 			return
 		}
 
-		// Direct Task Execution
-		fmt.Printf("\n%s%sTertic executing:%s %s\n\n", ColorBold, ColorCyan, ColorReset, userPrompt)
+		th := theme.Current()
+		fmt.Printf("\n%s%sTertic executing:%s %s\n\n", th.Bold, th.Primary, th.Reset, userPrompt)
 
 		if !isSingleAgentMode && isCodingTask(userPrompt) {
-			// Multi-Agent Workflow
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 			out, err := multiAgentEngine.ExecuteWorkflow(ctx, userPrompt)
 			if err != nil {
-				stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", ColorRed, ColorReset, ColorBold, ColorReset))
-				fmt.Fprintf(os.Stderr, "\n%sWorkflow Error: %v%s\n", ColorRed, err, ColorReset)
+				stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", th.Error, th.Reset, th.Bold, th.Reset))
+				fmt.Fprintf(os.Stderr, "\n%sWorkflow Error: %v%s\n", th.Error, err, th.Reset)
 			} else {
-				stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", ColorGreen, ColorReset, ColorBold, ColorReset))
+				stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", th.Success, th.Reset, th.Bold, th.Reset))
 				fmt.Println()
-				printStreamed(out)
+				ui.StreamTypewriter(out)
 			}
 			return
 		}
 
-		// Single-Agent Direct Execution
 		if gemClient != nil {
 			if err := runGeminiTurn(gemClient, &gemHistory, userPrompt); err != nil {
-				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
+				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", theme.Current().Error, err, theme.Current().Reset)
 			}
 		} else {
 			if err := runChatTurn(chatClient, &chatHistory, userPrompt); err != nil {
-				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", ColorRed, err, ColorReset)
+				fmt.Fprintf(os.Stderr, "\n%sError: %v%s\n", theme.Current().Error, err, theme.Current().Reset)
 			}
 		}
 		return
 	}
 
-	fmt.Print(ColorCyan, Banner, ColorReset)
-	fmt.Printf("%sMode:%s %s | %sModel:%s %s  %s(/model to switch | /process to toggle)%s\n", ColorBold, ColorReset, cfg.Provider, ColorBold, ColorReset, cfg.Model, ColorDim, ColorReset)
-	fmt.Printf("%sMulti-Agent Autonomous Orchestrator Ready%s (type your task, /agents, or 'exit')\n\n", ColorDim, ColorReset)
+	// Interactive Mode
+	workDir, _ := os.Getwd()
+	version := "2.1.0-premium"
+
+	drawWelcome := func() {
+		ui.RenderBanner(version, cfg.Provider, cfg.Model, workDir, voiceMgr.GetMode())
+	}
+
+	drawWelcome()
 
 	reader := bufio.NewReader(os.Stdin)
+
 	for {
-		fmt.Printf("%s%strtc ❯%s ", ColorBold, ColorGreen, ColorReset)
-		input, err := reader.ReadString('\n')
+		currentMode := voiceMgr.GetMode()
+
+		// If Voice Mode is active as primary input, run voice flow
+		if currentMode == voice.ModeVoice {
+			res := ui.StartVoiceInputFlow(context.Background(), reader, voiceMgr)
+			if res.Cancelled || !res.Submitted || res.Text == "" {
+				// Continue waiting
+				continue
+			}
+			executeTask(res.Text, cfg, gemClient, chatClient, multiAgentEngine, stopMultiAgentProgress, &gemHistory, &chatHistory)
+			continue
+		}
+
+		// Text or Hybrid Mode Prompt
+		promptPrefix := ui.RenderInputPrompt(currentMode)
+		input, err := ui.ReadMultiline(reader, promptPrefix)
 		if err != nil {
 			break
 		}
@@ -1184,61 +892,183 @@ func main() {
 		if prompt == "" {
 			continue
 		}
-		if prompt == "exit" || prompt == "quit" {
-			fmt.Printf("%sGoodbye!%s\n", ColorCyan, ColorReset)
+
+		// Check Interactive Commands
+		lowPrompt := strings.ToLower(prompt)
+		if lowPrompt == "exit" || lowPrompt == "quit" || lowPrompt == "/exit" {
+			fmt.Printf("%sGoodbye!%s\n", theme.Current().Primary, theme.Current().Reset)
 			break
 		}
 
-		if prompt == "/agents" {
-			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", ColorBold, ColorReset)
-			for _, ag := range agentReg.List() {
-				fmt.Printf(" • %s%-12s%s - %s\n", ColorBold, ag.Role(), ColorReset, ag.Description())
-			}
-			fmt.Println()
+		if lowPrompt == "/help" {
+			ui.RenderHelp()
 			continue
 		}
 
-		if prompt == "/model" || prompt == "/models" {
+		if lowPrompt == "/clear" {
+			fmt.Print("\033[H\033[2J")
+			drawWelcome()
+			continue
+		}
+
+		if lowPrompt == "/model" || lowPrompt == "/models" {
 			switchModelInteractive(cfg)
 			initClients()
 			continue
 		}
 
-		if prompt == "/process" || prompt == "/verbose" {
-			verboseProcess = !verboseProcess
-			if verboseProcess {
-				fmt.Printf("%s[Process Details: ON]%s Raw step-by-step tool output is now visible.\n\n", ColorGreen, ColorReset)
-			} else {
-				fmt.Printf("%s[Process Details: OFF]%s Clean mode active (hidden tool noise, like Devin/Antigravity).\n\n", ColorYellow, ColorReset)
+		if lowPrompt == "/agents" {
+			th := theme.Current()
+			fmt.Printf("\n%sAvailable Specialized Agents:%s\n", th.Bold, th.Reset)
+			for _, ag := range agentReg.List() {
+				fmt.Printf(" • %s%-12s%s ─ %s\n", th.Bold, ag.Role(), th.Reset, ag.Description())
+			}
+			fmt.Println()
+			continue
+		}
+
+		if lowPrompt == "/status" {
+			th := theme.Current()
+			fmt.Printf("\n%sTertic System & Agent Mesh Status:%s\n", th.Bold, th.Reset)
+			for _, ag := range agentReg.List() {
+				fmt.Printf(" • %-12s [%-12s] Status: %sREADY%s │ Tools: %v\n", ag.Name(), ag.Role(), th.Success, th.Reset, ag.AllowedTools())
+			}
+			fmt.Println()
+			fmt.Println(voiceMgr.StatusReport())
+			continue
+		}
+
+		if lowPrompt == "/theme" {
+			thOpts := []string{
+				"1) Dark (Default Cyan/Purple modern DevTools)",
+				"2) Light (High visibility for daylight)",
+				"3) Monochrome (Plain ASCII, no ANSI colors)",
+				"4) High Contrast (Bold accessible borders)",
+			}
+			tChoice := ui.SelectInteractiveWithTheme("Select Color Theme:", thOpts)
+			themes := theme.AvailableThemes()
+			if tChoice >= 0 && tChoice < len(themes) {
+				theme.SetTheme(themes[tChoice])
+				fmt.Printf("%sTheme switched to: %s%s\n\n", theme.Current().Success, themes[tChoice], theme.Current().Reset)
 			}
 			continue
 		}
 
-		if isCodingTask(prompt) {
-			// Multi-Agent workflow execution
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			out, err := multiAgentEngine.ExecuteWorkflow(ctx, prompt)
-			cancel()
-			if err != nil {
-				stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", ColorRed, ColorReset, ColorBold, ColorReset))
-				fmt.Fprintf(os.Stderr, "%sWorkflow Error: %v%s\n\n", ColorRed, err, ColorReset)
+		if lowPrompt == "/voice" {
+			voiceMgr.SetMode(voice.ModeVoice)
+			fmt.Printf("%s✔ Switched to Voice Input Mode (use /text to return)%s\n\n", theme.Current().RecordColor, theme.Current().Reset)
+			continue
+		}
+
+		if lowPrompt == "/text" {
+			voiceMgr.SetMode(voice.ModeText)
+			fmt.Printf("%s✔ Switched to Keyboard Text Mode%s\n\n", theme.Current().Success, theme.Current().Reset)
+			continue
+		}
+
+		if lowPrompt == "/input" {
+			inputOpts := []string{
+				"1) Text Mode (Traditional keyboard input - Default)",
+				"2) Voice Mode (Direct spoken instructions)",
+				"3) Hybrid Mode (Keyboard + voice shortcuts)",
+			}
+			choice := ui.SelectInteractiveWithTheme("Select Active Input Mode:", inputOpts)
+			switch choice {
+			case 0:
+				voiceMgr.SetMode(voice.ModeText)
+			case 1:
+				voiceMgr.SetMode(voice.ModeVoice)
+			case 2:
+				voiceMgr.SetMode(voice.ModeHybrid)
+			}
+			fmt.Printf("%sActive Input Mode: %s%s\n\n", theme.Current().Success, strings.ToUpper(string(voiceMgr.GetMode())), theme.Current().Reset)
+			continue
+		}
+
+		if lowPrompt == "/listen" || lowPrompt == "/stop" || lowPrompt == "/transcribe" {
+			res := ui.StartVoiceInputFlow(context.Background(), reader, voiceMgr)
+			if res.Cancelled || !res.Submitted || res.Text == "" {
+				continue
+			}
+			prompt = res.Text
+		}
+
+		if lowPrompt == "/verbose" || lowPrompt == "/process" {
+			verboseProcess = !verboseProcess
+			th := theme.Current()
+			if verboseProcess {
+				fmt.Printf("%s[Process Details: ON]%s Step-by-step tool output is visible.\n\n", th.Success, th.Reset)
 			} else {
-				stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", ColorGreen, ColorReset, ColorBold, ColorReset))
-				fmt.Println()
-				printStreamed(out)
+				fmt.Printf("%s[Process Details: OFF]%s Clean mode active (Devin/Antigravity concise format).\n\n", th.Warning, th.Reset)
+			}
+			continue
+		}
+
+		if lowPrompt == "/config" {
+			th := theme.Current()
+			fmt.Printf("\n%sActive Model Configuration:%s\n", th.Bold, th.Reset)
+			fmt.Printf(" Provider: %s\n Model:    %s\n Mode:     Sequential Android (4GB RAM safe)\n\n", cfg.Provider, cfg.Model)
+			continue
+		}
+
+		if lowPrompt == "/history" {
+			hist := multiAgentEngine.GetSharedHistory()
+			th := theme.Current()
+			fmt.Printf("\n%sShared Conversation History (%d messages):%s\n", th.Bold, len(hist), th.Reset)
+			for i, m := range hist {
+				fmt.Printf(" [%d] %s%s%s: %s\n", i+1, th.Primary, m.Role, th.Reset, m.Content)
+			}
+			fmt.Println()
+			continue
+		}
+
+		if lowPrompt == "/context" {
+			th := theme.Current()
+			fmt.Printf("\n%sProject Context in %s:%s\n", th.Bold, workDir, th.Reset)
+			out, _ := tools.ExecuteTool("list_dir", map[string]interface{}{"path": "."})
+			fmt.Println(out)
+			fmt.Println()
+			continue
+		}
+
+		executeTask(prompt, cfg, gemClient, chatClient, multiAgentEngine, stopMultiAgentProgress, &gemHistory, &chatHistory)
+		fmt.Println()
+	}
+}
+
+func executeTask(
+	prompt string,
+	cfg *AgentConfig,
+	gemClient *gemini.Client,
+	chatClient ChatClient,
+	multiAgentEngine *orchestrator.Engine,
+	stopMultiAgentProgress func(string),
+	gemHistory *[]gemini.Content,
+	chatHistory *[]openrouter.Message,
+) {
+	th := theme.Current()
+	if isCodingTask(prompt) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		out, err := multiAgentEngine.ExecuteWorkflow(ctx, prompt)
+		if err != nil {
+			stopMultiAgentProgress(fmt.Sprintf("%s✖%s %sWorkflow failed%s", th.Error, th.Reset, th.Bold, th.Reset))
+			fmt.Fprintf(os.Stderr, "%sWorkflow Error: %v%s\n", th.Error, err, th.Reset)
+		} else {
+			stopMultiAgentProgress(fmt.Sprintf("%s✔%s %sAll tasks completed & verified%s", th.Success, th.Reset, th.Bold, th.Reset))
+			fmt.Println()
+			ui.StreamTypewriter(out)
+		}
+	} else {
+		// Conversational turn
+		if gemClient != nil {
+			if err := runGeminiTurn(gemClient, gemHistory, prompt); err != nil {
+				fmt.Fprintf(os.Stderr, "%sError: %v%s\n", th.Error, err, th.Reset)
 			}
 		} else {
-			// Conversational turn
-			if gemClient != nil {
-				if err := runGeminiTurn(gemClient, &gemHistory, prompt); err != nil {
-					fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
-				}
-			} else {
-				if err := runChatTurn(chatClient, &chatHistory, prompt); err != nil {
-					fmt.Fprintf(os.Stderr, "%sError: %v%s\n\n", ColorRed, err, ColorReset)
-				}
+			if err := runChatTurn(chatClient, chatHistory, prompt); err != nil {
+				fmt.Fprintf(os.Stderr, "%sError: %v%s\n", th.Error, err, th.Reset)
 			}
 		}
-		fmt.Println()
 	}
 }
