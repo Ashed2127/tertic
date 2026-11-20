@@ -257,3 +257,39 @@ func FormatActionHumanReadable(toolName string, args map[string]interface{}) str
 		return fmt.Sprintf("Executing %s...", toolName)
 	}
 }
+
+// FormatToolOutput formats tool results cleanly for mobile screens, collapsing long outputs
+func FormatToolOutput(toolName string, output string, verbose bool) string {
+	th := theme.Current()
+	lines := strings.Split(strings.TrimRight(output, "\r\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(output) == "" {
+		return ""
+	}
+
+	maxLines := 4
+	if verbose {
+		maxLines = 15
+	}
+
+	var sb strings.Builder
+	limit := len(lines)
+	truncated := false
+	if limit > maxLines {
+		limit = maxLines
+		truncated = true
+	}
+
+	for i := 0; i < limit; i++ {
+		line := lines[i]
+		if len(line) > 80 {
+			line = line[:77] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  %s│%s %s\n", th.Border, th.Reset, line))
+	}
+
+	if truncated {
+		sb.WriteString(fmt.Sprintf("  %s│ ... (+%d more lines collapsed, use /verbose to view)%s\n", th.Muted, len(lines)-maxLines, th.Reset))
+	}
+
+	return sb.String()
+}

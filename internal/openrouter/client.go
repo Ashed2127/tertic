@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Ashed2127/tertic/internal/tools"
@@ -15,6 +16,15 @@ const (
 	DefaultModel = "nvidia/nemotron-3.5-lightning:free"
 	APIBaseURL   = "https://openrouter.ai/api/v1/chat/completions"
 )
+
+// FallbackFreeModels defines resilient failover models when a free model hits 429 or 404
+var FallbackFreeModels = []string{
+	"nvidia/nemotron-3.5-lightning:free",
+	"google/gemma-4-31b-it:free",
+	"google/gemma-4-26b-a4b-it:free",
+	"inclusionai/ling-3.2-flash:free",
+	"liquid/lfm-3-1.7b:free",
+}
 
 type Client struct {
 	APIKey     string
@@ -88,46 +98,72 @@ func ConvertToolDefinitions(defs []tools.ToolDefinition) []OpenRouterTool {
 }
 
 func (c *Client) Chat(req ChatCompletionRequest) (*ChatCompletionResponse, error) {
-	req.Model = c.Model
-
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	candidateModels := []string{c.Model}
+	if strings.HasSuffix(c.Model, ":free") {
+		for _, m := range FallbackFreeModels {
+			if m != c.Model {
+				candidateModels = append(candidateModels, m)
+			}
+		}
 	}
 
-	httpReq, err := http.NewRequest("POST", APIBaseURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build http request: %w", err)
+	var lastErr error
+	for idx, modelToTry := range candidateModels {
+		req.Model = modelToTry
+
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+
+		httpReq, err := http.NewRequest("POST", APIBaseURL, bytes.NewBuffer(reqBytes))
+		if err != nil {
+			return nil, fmt.Errorf("failed to build http request: %w", err)
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		httpReq.Header.Set("HTTP-Referer", "https://github.com/Ashed2127/tertic")
+		httpReq.Header.Set("X-Title", "Tertic Termux AI Agent")
+
+		resp, err := c.HTTPClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("http request failed: %w", err)
+			continue
+		}
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", err)
+			continue
+		}
+
+		var chatResp ChatCompletionResponse
+		if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+			lastErr = fmt.Errorf("failed to parse json response: %w, raw: %s", err, string(bodyBytes))
+			continue
+		}
+
+		if chatResp.Error != nil {
+			lastErr = fmt.Errorf("OpenRouter API error: %s (code %d)", chatResp.Error.Message, chatResp.Error.Code)
+			// Check if rate limited (429) or model deprecated/not found (404/400)
+			if (chatResp.Error.Code == 429 || chatResp.Error.Code == 404 || chatResp.Error.Code == 400 || strings.Contains(strings.ToLower(chatResp.Error.Message), "rate-limit")) && idx < len(candidateModels)-1 {
+				// Auto-failover to next candidate model
+				continue
+			}
+			return nil, lastErr
+		}
+
+		if len(chatResp.Choices) == 0 {
+			lastErr = fmt.Errorf("no choices returned from OpenRouter API")
+			continue
+		}
+
+		// Update active model if fallback succeeded
+		c.Model = modelToTry
+		return &chatResp, nil
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	httpReq.Header.Set("HTTP-Referer", "https://github.com/Ashed2127/tertic")
-	httpReq.Header.Set("X-Title", "Tertic Termux AI Agent")
-
-	resp, err := c.HTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var chatResp ChatCompletionResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse json response: %w, raw: %s", err, string(bodyBytes))
-	}
-
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("OpenRouter API error: %s (code %d)", chatResp.Error.Message, chatResp.Error.Code)
-	}
-
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices returned from OpenRouter API")
-	}
-
-	return &chatResp, nil
+	return nil, lastErr
 }

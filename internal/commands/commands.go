@@ -196,6 +196,13 @@ func (r *Registry) registerDefaults() {
 			Category:    CategoryModels,
 			Priority:    8,
 		},
+		{
+			Name:        "/provider",
+			Aliases:     []string{"p"},
+			Description: "Switch AI provider (OpenRouter/Gemini/Ollama)",
+			Category:    CategoryModels,
+			Priority:    8,
+		},
 
 		// Agents
 		{
@@ -271,6 +278,19 @@ func (r *Registry) registerDefaults() {
 		{
 			Name:        "/history",
 			Description: "View conversation history",
+			Category:    CategorySession,
+			Priority:    5,
+		},
+		{
+			Name:        "/sessions",
+			Aliases:     []string{"session"},
+			Description: "List or resume saved chat sessions",
+			Category:    CategorySession,
+			Priority:    6,
+		},
+		{
+			Name:        "/save",
+			Description: "Save current conversation session",
 			Category:    CategorySession,
 			Priority:    5,
 		},

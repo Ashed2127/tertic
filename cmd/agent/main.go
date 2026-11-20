@@ -20,6 +20,7 @@ import (
 	"github.com/Ashed2127/tertic/internal/ollama"
 	"github.com/Ashed2127/tertic/internal/openrouter"
 	"github.com/Ashed2127/tertic/internal/orchestrator"
+	"github.com/Ashed2127/tertic/internal/session"
 	"github.com/Ashed2127/tertic/internal/theme"
 	"github.com/Ashed2127/tertic/internal/tools"
 	"github.com/Ashed2127/tertic/internal/ui"
@@ -253,45 +254,45 @@ func switchModelInteractive(cfg *AgentConfig) {
 
 	if catChoice == 0 {
 		cloudOpts := []string{
+			"OpenRouter: Nvidia Nemotron 3.5 Lightning (Free remote reasoning - Default)",
+			"OpenRouter: Google Gemma 4 31B (Free, Fast, Tool-Enabled)",
+			"OpenRouter: Google Gemma 4 26B (Free fast multimodal)",
+			"OpenRouter: InclusionAI Ling 3.2 Flash (Free ultra-fast)",
 			"Google Gemini 3.1 Flash-Lite (High speed, Free tier)",
 			"Google Gemini 3 Flash Preview (Reasoning & Full tools)",
-			"OpenRouter: Google Gemma 4 31B (Free, Fast, Tool-Enabled)",
-			"OpenRouter: Nvidia Nemotron 3.5 Lightning (Free remote reasoning)",
-			"OpenRouter: Qwen 2.5 Coder 32B (Free remote coding)",
-			"OpenRouter: DeepSeek R1 (Free remote reasoning)",
 		}
 		cIdx := ui.SelectInteractiveWithTheme("Select Cloud Model to Use:", cloudOpts)
 		switch cIdx {
 		case 0:
-			cfg.Provider = "gemini"
-			cfg.Model = "gemini-3.1-flash-lite"
-		case 1:
-			cfg.Provider = "gemini"
-			cfg.Model = "gemini-3-flash-preview"
-		case 2:
-			cfg.Provider = "openrouter"
-			cfg.Model = "google/gemma-4-31b-it:free"
-			if cfg.APIKey == "" {
-				cfg.APIKey = getBuiltinOpenRouterKey()
-			}
-		case 3:
 			cfg.Provider = "openrouter"
 			cfg.Model = "nvidia/nemotron-3.5-lightning:free"
 			if cfg.APIKey == "" {
 				cfg.APIKey = getBuiltinOpenRouterKey()
 			}
+		case 1:
+			cfg.Provider = "openrouter"
+			cfg.Model = "google/gemma-4-31b-it:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		case 2:
+			cfg.Provider = "openrouter"
+			cfg.Model = "google/gemma-4-26b-a4b-it:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
+		case 3:
+			cfg.Provider = "openrouter"
+			cfg.Model = "inclusionai/ling-3.2-flash:free"
+			if cfg.APIKey == "" {
+				cfg.APIKey = getBuiltinOpenRouterKey()
+			}
 		case 4:
-			cfg.Provider = "openrouter"
-			cfg.Model = "qwen/qwen-2.5-coder-32b-instruct:free"
-			if cfg.APIKey == "" {
-				cfg.APIKey = getBuiltinOpenRouterKey()
-			}
+			cfg.Provider = "gemini"
+			cfg.Model = "gemini-3.1-flash-lite"
 		case 5:
-			cfg.Provider = "openrouter"
-			cfg.Model = "deepseek/deepseek-r1:free"
-			if cfg.APIKey == "" {
-				cfg.APIKey = getBuiltinOpenRouterKey()
-			}
+			cfg.Provider = "gemini"
+			cfg.Model = "gemini-3-flash-preview"
 		}
 
 	} else if catChoice == 1 {
@@ -507,39 +508,21 @@ func runChatTurn(client ChatClient, history *[]openrouter.Message, userPrompt st
 				_ = json.Unmarshal([]byte(fn.Arguments), &args)
 			}
 
-			actionDesc := fn.Arguments
-			if cmd, ok := args["command"].(string); ok {
-				actionDesc = cmd
-			} else if p, ok := args["path"].(string); ok {
-				actionDesc = p
-			}
-
 			taskLabel := ui.FormatActionHumanReadable(fn.Name, args)
 			toolIndicator := ui.NewIndicator(taskLabel)
 			toolIndicator.Start()
 
 			output, toolErr := tools.ExecuteTool(fn.Name, args)
-			th := theme.Current()
 			if toolErr != nil {
-				if verboseProcess {
-					toolIndicator.Stop(fmt.Sprintf("%s[%s failed]: %v%s", th.Error, fn.Name, toolErr, th.Reset))
-				} else {
-					toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
-				}
+				toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 				output = fmt.Sprintf("Error: %v", toolErr)
+				if formatted := ui.FormatToolOutput(fn.Name, output, verboseProcess); formatted != "" {
+					fmt.Print(formatted)
+				}
 			} else {
-				if verboseProcess {
-					toolIndicator.Stop(fmt.Sprintf("%s%s [%s]:%s %s", th.Bold, th.Success, fn.Name, th.Reset, actionDesc))
-					lines := strings.Split(output, "\n")
-					preview := output
-					if len(lines) > 4 {
-						preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", th.Muted, len(lines)-4, th.Reset)
-					}
-					if strings.TrimSpace(preview) != "" {
-						fmt.Printf("%s%s%s\n", th.Primary, preview, th.Reset)
-					}
-				} else {
-					toolIndicator.StopSuccess(taskLabel)
+				toolIndicator.StopSuccess(taskLabel)
+				if formatted := ui.FormatToolOutput(fn.Name, output, verboseProcess); formatted != "" {
+					fmt.Print(formatted)
 				}
 			}
 
@@ -609,39 +592,21 @@ func runGeminiTurn(client *gemini.Client, history *[]gemini.Content, userPrompt 
 				hasToolCalls = true
 				call := part.FunctionCall
 
-				actionDesc := fmt.Sprintf("%v", call.Args)
-				if cmd, ok := call.Args["command"].(string); ok {
-					actionDesc = cmd
-				} else if p, ok := call.Args["path"].(string); ok {
-					actionDesc = p
-				}
-
 				taskLabel := ui.FormatActionHumanReadable(call.Name, call.Args)
 				toolIndicator := ui.NewIndicator(taskLabel)
 				toolIndicator.Start()
 
 				output, toolErr := tools.ExecuteTool(call.Name, call.Args)
-				th := theme.Current()
 				if toolErr != nil {
-					if verboseProcess {
-						toolIndicator.Stop(fmt.Sprintf("%s[%s failed]: %v%s", th.Error, call.Name, toolErr, th.Reset))
-					} else {
-						toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
-					}
+					toolIndicator.StopFailure(fmt.Sprintf("%s failed", taskLabel))
 					output = fmt.Sprintf("Error: %v", toolErr)
+					if formatted := ui.FormatToolOutput(call.Name, output, verboseProcess); formatted != "" {
+						fmt.Print(formatted)
+					}
 				} else {
-					if verboseProcess {
-						toolIndicator.Stop(fmt.Sprintf("%s%s [%s]:%s %s", th.Bold, th.Success, call.Name, th.Reset, actionDesc))
-						lines := strings.Split(output, "\n")
-						preview := output
-						if len(lines) > 4 {
-							preview = strings.Join(lines[:4], "\n") + fmt.Sprintf("\n%s... (+%d lines)%s", th.Muted, len(lines)-4, th.Reset)
-						}
-						if strings.TrimSpace(preview) != "" {
-							fmt.Printf("%s%s%s\n", th.Primary, preview, th.Reset)
-						}
-					} else {
-						toolIndicator.StopSuccess(taskLabel)
+					toolIndicator.StopSuccess(taskLabel)
+					if formatted := ui.FormatToolOutput(call.Name, output, verboseProcess); formatted != "" {
+						fmt.Print(formatted)
 					}
 				}
 
@@ -776,13 +741,28 @@ func main() {
 	initClients()
 
 	isSingleAgentMode := false
+	continueSession := false
 	args := os.Args[1:]
 	var filteredArgs []string
 	for _, a := range args {
 		if a == "--single-agent" {
 			isSingleAgentMode = true
+		} else if a == "-c" || a == "--continue" {
+			continueSession = true
 		} else {
 			filteredArgs = append(filteredArgs, a)
+		}
+	}
+
+	if continueSession {
+		if latest, err := session.LoadLatestSession(); err == nil && latest != nil {
+			chatHistory = latest.History
+			cfg.Provider = latest.Provider
+			cfg.Model = latest.Model
+			initClients()
+			fmt.Printf("%s✔ Resumed latest session (%s, %d messages)%s\n", theme.Current().Success, latest.ID, len(chatHistory), theme.Current().Reset)
+		} else {
+			fmt.Printf("%s[Notice] No previous session found to continue; starting fresh.%s\n", theme.Current().Warning, theme.Current().Reset)
 		}
 	}
 
@@ -917,7 +897,7 @@ func main() {
 			continue
 		}
 
-		if lowPrompt == "/model" || lowPrompt == "/models" {
+		if lowPrompt == "/model" || lowPrompt == "/models" || lowPrompt == "/provider" {
 			switchModelInteractive(cfg)
 			initClients()
 			continue
@@ -1038,6 +1018,49 @@ func main() {
 			out, _ := tools.ExecuteTool("list_dir", map[string]interface{}{"path": "."})
 			fmt.Println(out)
 			fmt.Println()
+			continue
+		}
+
+		if lowPrompt == "/save" {
+			th := theme.Current()
+			sessID := fmt.Sprintf("session-%d", time.Now().Unix())
+			sess := &session.SavedSession{
+				ID:        sessID,
+				Provider:  cfg.Provider,
+				Model:     cfg.Model,
+				WorkDir:   workDir,
+				CreatedAt: time.Now(),
+				History:   chatHistory,
+			}
+			if err := session.SaveSession(sess); err != nil {
+				fmt.Printf("%sFailed to save session: %v%s\n\n", th.Error, err, th.Reset)
+			} else {
+				fmt.Printf("%s✔ Session saved successfully (%s)%s\n\n", th.Success, sessID, th.Reset)
+			}
+			continue
+		}
+
+		if lowPrompt == "/sessions" || lowPrompt == "/session" {
+			th := theme.Current()
+			sessions, err := session.ListSessions()
+			if err != nil || len(sessions) == 0 {
+				fmt.Printf("%sNo saved sessions found in %s%s\n\n", th.Warning, session.GetSessionsDir(), th.Reset)
+				continue
+			}
+			var sessOpts []string
+			for _, s := range sessions {
+				sessOpts = append(sessOpts, fmt.Sprintf("%-20s │ %-12s │ %s", s.ID, s.UpdatedAt.Format("15:04:05 Jan 02"), s.Title))
+			}
+			sessOpts = append(sessOpts, "Cancel")
+			idx := ui.SelectInteractiveWithTheme("Select a Session to Resume:", sessOpts)
+			if idx >= 0 && idx < len(sessions) {
+				selected := sessions[idx]
+				chatHistory = selected.History
+				cfg.Provider = selected.Provider
+				cfg.Model = selected.Model
+				initClients()
+				fmt.Printf("%s✔ Resumed session: %s (%d messages loaded)%s\n\n", th.Success, selected.ID, len(chatHistory), th.Reset)
+			}
 			continue
 		}
 
