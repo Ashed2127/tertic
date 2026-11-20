@@ -1063,14 +1063,16 @@ func main() {
 			MaxConcurrentAgents: 1, // Sequential execution for low-RAM Android/Termux
 			SequentialOnly:      true,
 			OnProgress: func(role, status string) {
+				if role != "Action" {
+					return
+				}
 				activeProgressMu.Lock()
 				defer activeProgressMu.Unlock()
-				msg := fmt.Sprintf("[%s] %s", role, status)
 				if activeProgressSpinner == nil {
-					activeProgressSpinner = NewSpinner(msg)
+					activeProgressSpinner = NewSpinner(status)
 					activeProgressSpinner.Start()
 				} else {
-					activeProgressSpinner.TransitionTo(msg)
+					activeProgressSpinner.TransitionTo(status)
 				}
 			},
 		})

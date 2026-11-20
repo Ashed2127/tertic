@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,7 +118,41 @@ func (e *Engine) ExecuteTool(agentName, toolName string, args map[string]interfa
 	}
 
 	// 3. Execution
+	e.NotifyProgress("Action", toolActionLabel(toolName, args))
 	return tools.ExecuteTool(toolName, args)
+}
+
+// toolActionLabel produces a Devin-style status line for the spinner
+func toolActionLabel(toolName string, args map[string]interface{}) string {
+	path, _ := args["path"].(string)
+	cmd, _ := args["command"].(string)
+	if i := strings.IndexByte(cmd, '\n'); i != -1 {
+		cmd = cmd[:i]
+	}
+	if len(cmd) > 80 {
+		cmd = cmd[:77] + "..."
+	}
+	switch toolName {
+	case "execute_bash":
+		if cmd != "" {
+			return "Running: " + cmd
+		}
+		return "Running command..."
+	case "write_file", "edit_file":
+		if path != "" {
+			return "Editing: " + path
+		}
+		return "Editing file..."
+	case "read_file":
+		if path != "" {
+			return "Reading: " + path
+		}
+		return "Reading file..."
+	case "list_dir":
+		return "Listing directory..."
+	default:
+		return "Working..."
+	}
 }
 
 func (e *Engine) GetSharedContext() map[string]interface{} {
