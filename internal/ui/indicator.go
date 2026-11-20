@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,6 +11,58 @@ import (
 
 	"github.com/Ashed2127/tertic/internal/theme"
 )
+
+// TerminalWriter synchronizes all terminal line rendering across goroutines.
+// Ensures that animated indicators and status updates cleanly rewrite the active line
+// using \r\033[2K without generating duplicates or broken lines.
+type TerminalWriter struct {
+	mu            sync.Mutex
+	out           io.Writer
+	activeMsg     string
+	hasActiveLine bool
+}
+
+// Global shared terminal writer
+var termWriter = &TerminalWriter{
+	out: os.Stdout,
+}
+
+// RenderActiveLine writes or rewrites a line in-place using carriage return and ANSI erase line.
+func (tw *TerminalWriter) RenderActiveLine(formattedText, cleanText string) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	// In-place rewrite: \r moves cursor to start of line, \033[2K clears the line
+	fmt.Fprintf(tw.out, "\r\033[2K%s", formattedText)
+	tw.activeMsg = cleanText
+	tw.hasActiveLine = true
+}
+
+// ClearActiveLine clears the active line in-place without moving to the next line.
+func (tw *TerminalWriter) ClearActiveLine() {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	if tw.hasActiveLine {
+		fmt.Fprint(tw.out, "\r\033[2K")
+		tw.activeMsg = ""
+		tw.hasActiveLine = false
+	}
+}
+
+// CommitLine clears the active line and prints the final message with a newline.
+func (tw *TerminalWriter) CommitLine(formattedLine string) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	if formattedLine != "" {
+		fmt.Fprintf(tw.out, "\r\033[2K%s\n", formattedLine)
+	} else if tw.hasActiveLine {
+		fmt.Fprint(tw.out, "\r\033[2K")
+	}
+	tw.activeMsg = ""
+	tw.hasActiveLine = false
+}
 
 // Indicator is an enhanced smart loading and status indicator
 type Indicator struct {
@@ -50,13 +104,14 @@ func NewIndicator(msg string) *Indicator {
 func NewVoiceIndicator(msg string) *Indicator {
 	ind := NewIndicator(msg)
 	ind.isVoice = true
+	// Minimalist, stable recording dot pulsing cleanly
 	ind.frames = []string{
-		"●    ", " ●   ", "  ●  ", "   ● ", "    ●", "   ● ", "  ●  ", " ●   ",
+		"●", "◐", "◓", "◑", "◒",
 	}
 	return ind
 }
 
-// Start begins animating on stdout using in-place line rewriting
+// Start begins animating on stdout using synchronized in-place line rewriting
 func (ind *Indicator) Start() {
 	if !ind.enabled {
 		return
@@ -68,7 +123,6 @@ func (ind *Indicator) Start() {
 		for {
 			select {
 			case <-ind.stop:
-				fmt.Print("\r\033[2K")
 				return
 			default:
 				ind.mu.Lock()
@@ -78,13 +132,16 @@ func (ind *Indicator) Start() {
 				ind.mu.Unlock()
 
 				frame := ind.frames[i%len(ind.frames)]
+				var formatted string
 				if isV {
-					fmt.Printf("\r\033[2K%s%s%s %s%s%s", th.RecordColor, frame, th.Reset, th.Bold, m, th.Reset)
+					formatted = fmt.Sprintf("%s%s%s %s%s%s", th.RecordColor, frame, th.Reset, th.Bold, m, th.Reset)
 				} else {
-					fmt.Printf("\r\033[2K%s%s%s %s%s%s", th.Primary, frame, th.Reset, th.Muted, m, th.Reset)
+					formatted = fmt.Sprintf("%s%s%s %s%s%s", th.Primary, frame, th.Reset, th.Muted, m, th.Reset)
 				}
+
+				termWriter.RenderActiveLine(formatted, m)
 				i++
-				time.Sleep(65 * time.Millisecond)
+				time.Sleep(80 * time.Millisecond)
 			}
 		}
 	}()
@@ -106,11 +163,7 @@ func (ind *Indicator) Stop(finalMsg string) {
 	close(ind.stop)
 	ind.wg.Wait()
 
-	if finalMsg != "" {
-		fmt.Printf("\r\033[2K%s\n", finalMsg)
-	} else {
-		fmt.Print("\r\033[2K")
-	}
+	termWriter.CommitLine(finalMsg)
 }
 
 // StopSuccess prints a clean green checkmark indicator

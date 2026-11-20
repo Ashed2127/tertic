@@ -184,11 +184,11 @@ func (t *TermuxAPIEngine) StartRecording(ctx context.Context, onStatus func(stri
 	if _, err := exec.LookPath("termux-microphone-record"); err == nil {
 		audioPath := GenerateAudioPath()
 		cmd := exec.CommandContext(ctx, "termux-microphone-record", "-f", audioPath, "-l", "300")
+		// Mute stdout and stderr to prevent console pollution
+		cmd.Stdout = nil
+		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {
 			return nil, fmt.Errorf("failed to start Termux microphone: %w (check Termux:API mic permissions)", err)
-		}
-		if onStatus != nil {
-			onStatus("Recording audio (Speak now - Press [ENTER] when done)...")
 		}
 		return &ActiveRecording{
 			AudioPath: audioPath,
@@ -210,9 +210,6 @@ func (t *TermuxAPIEngine) Transcribe(ctx context.Context, audioPath string, onSt
 
 func (t *TermuxAPIEngine) RecordAndTranscribe(ctx context.Context, onStatus func(string)) (string, error) {
 	if _, err := exec.LookPath("termux-speech-to-text"); err == nil {
-		if onStatus != nil {
-			onStatus("Listening for speech (Android SpeechRecognizer)...")
-		}
 		cmd := exec.CommandContext(ctx, "termux-speech-to-text")
 		out, err := cmd.Output()
 		if err != nil {
@@ -269,26 +266,28 @@ func (s *SystemAudioEngine) StartRecording(ctx context.Context, onStatus func(st
 	var cmd *exec.Cmd
 	switch tool {
 	case "arecord":
-		cmd = exec.CommandContext(ctx, "arecord", "-d", "300", "-f", "cd", "-t", "wav", audioPath)
+		// -q is quiet mode (prevents arecord from printing banner to stdout/stderr)
+		cmd = exec.CommandContext(ctx, "arecord", "-q", "-d", "300", "-f", "cd", "-t", "wav", audioPath)
 	case "ffmpeg":
-		// Auto-detect audio input driver: pulse, alsa, or default
 		inputDriver := "default"
 		if hasPulseAudio() {
 			inputDriver = "pulse"
 		} else {
 			inputDriver = "alsa"
 		}
-		cmd = exec.CommandContext(ctx, "ffmpeg", "-y", "-f", inputDriver, "-i", "default", "-t", "300", audioPath)
+		// -loglevel quiet prevents ffmpeg from printing banner & progress lines
+		cmd = exec.CommandContext(ctx, "ffmpeg", "-loglevel", "quiet", "-y", "-f", inputDriver, "-i", "default", "-t", "300", audioPath)
 	case "sox":
-		cmd = exec.CommandContext(ctx, "rec", "-r", "16000", "-c", "1", audioPath, "trim", "0", "300")
+		// -q suppresses sox progress output
+		cmd = exec.CommandContext(ctx, "rec", "-q", "-r", "16000", "-c", "1", audioPath, "trim", "0", "300")
 	}
+
+	// Explicitly silence stdout and stderr to prevent line disruption in terminal
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start %s recording: %w", tool, err)
-	}
-
-	if onStatus != nil {
-		onStatus("Recording audio (Speak now - Press [ENTER] when done)...")
 	}
 
 	return &ActiveRecording{
@@ -358,15 +357,13 @@ func TranscribeAudioFile(ctx context.Context, audioPath string, onStatus func(st
 		speechKey = os.Getenv("GEMINI_API_KEY")
 	}
 
-	if onStatus != nil {
-		onStatus("Transcribing with Speech Recognition API...")
-	}
-
 	// Convert audio to 16kHz mono FLAC or WAV for best recognition compatibility
 	flacPath := filepath.Join(GetRecordingsDir(), fmt.Sprintf("flac_%d.flac", time.Now().UnixNano()))
 	defer os.Remove(flacPath)
 
-	convertCmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", flacPath)
+	convertCmd := exec.CommandContext(ctx, "ffmpeg", "-loglevel", "quiet", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", flacPath)
+	convertCmd.Stdout = nil
+	convertCmd.Stderr = nil
 	if err := convertCmd.Run(); err != nil {
 		// If ffmpeg conversion fails, try using raw file
 		flacPath = audioPath

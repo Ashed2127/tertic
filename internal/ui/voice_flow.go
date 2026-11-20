@@ -20,7 +20,7 @@ type VoiceSessionResult struct {
 
 // StartVoiceInputFlow implements the robust voice recording state machine:
 // IDLE → RECORDING → STOPPING → RECORDED → TRANSCRIBING → COMPLETED
-// Prevents line duplication, validates the recorded audio file, and provides actionable error messages.
+// Updates a single in-place line cleanly on stdout without duplicate messages or screen clutter.
 func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *voice.Manager) VoiceSessionResult {
 	th := theme.Current()
 
@@ -57,12 +57,10 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 		}
 
 		// State: RECORDING
-		recIndicator := NewVoiceIndicator("Recording... Speak now (Press [ENTER] to stop)")
+		recIndicator := NewVoiceIndicator("Recording audio (Speak now - Press [ENTER] to stop)")
 		recIndicator.Start()
 
-		recSession, err := activeEng.StartRecording(ctx, func(status string) {
-			recIndicator.Update(status)
-		})
+		recSession, err := activeEng.StartRecording(ctx, nil)
 
 		var transcribed string
 		if err != nil {
@@ -70,7 +68,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 			fmt.Printf("%sMicrophone unavailable: %v%s\n", th.Error, err, th.Reset)
 			fmt.Println("Ensure Termux:API has microphone permissions granted in Android Settings.")
 		} else {
-			// Listen for user pressing [ENTER] or typing 'cancel'
+			// Listen asynchronously on stdin for user pressing [ENTER] or typing 'cancel'
 			stopChan := make(chan string, 1)
 			go func() {
 				line, _ := reader.ReadString('\n')
@@ -79,8 +77,8 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 
 			select {
 			case userInput := <-stopChan:
-				// State: STOPPING
-				recIndicator.Update("Stopping recording & flushing audio...")
+				// State: STOPPING - transition in-place without producing new line
+				recIndicator.Update("Stopping recording...")
 				_ = recSession.Stop()
 
 				if strings.ToLower(userInput) == "cancel" {
@@ -101,7 +99,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 				recIndicator.StopFailure("Recording failed: " + valErr.Error())
 				err = valErr
 			} else {
-				// State: TRANSCRIBING
+				// State: TRANSCRIBING - transition in-place
 				recIndicator.Update("Transcribing audio...")
 				transcribed, err = activeEng.Transcribe(ctx, recSession.AudioPath, func(s string) {
 					recIndicator.Update(s)
@@ -109,7 +107,7 @@ func StartVoiceInputFlow(ctx context.Context, reader *bufio.Reader, voiceMgr *vo
 
 				if err == nil {
 					// State: COMPLETED
-					recIndicator.StopSuccess("Transcription complete")
+					recIndicator.StopSuccess("Transcription completed.")
 					// Clean up temporary recording on success
 					_ = os.Remove(recSession.AudioPath)
 				} else {
