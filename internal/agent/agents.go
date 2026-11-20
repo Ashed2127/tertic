@@ -80,6 +80,7 @@ func (a *CoordinatorAgent) Execute(ctx context.Context, h Harness, input string,
 	}
 	messages = append(messages, userMsg)
 
+	h.NotifyProgress("Thinking", "Thinking...")
 	resp, err := p.Generate(ctx, messages, nil, model.ModelOptions{Temperature: 0.2})
 	if err != nil {
 		return nil, err
@@ -143,6 +144,7 @@ func (a *PlannerAgent) Execute(ctx context.Context, h Harness, input string, cur
 		{Role: "user", Content: prompt},
 	}
 
+	h.NotifyProgress("Thinking", "Thinking...")
 	resp, err := p.Generate(ctx, messages, nil, model.ModelOptions{Temperature: 0.1})
 	if err != nil {
 		return nil, err
@@ -214,6 +216,7 @@ func (a *ResearcherAgent) Execute(ctx context.Context, h Harness, input string, 
 		{Role: "user", Content: fmt.Sprintf("Gather technical context for: %s", input)},
 	}
 
+	h.NotifyProgress("Thinking", "Thinking...")
 	resp, err := p.Generate(ctx, messages, toolDefs, model.ModelOptions{Temperature: 0.2})
 	if err != nil {
 		return nil, err
@@ -295,6 +298,7 @@ func (a *DeveloperAgent) Execute(ctx context.Context, h Harness, input string, c
 	maxSteps := 10
 	var finalSummary string
 	for step := 0; step < maxSteps; step++ {
+		h.NotifyProgress("Thinking", "Thinking...")
 		resp, err := p.Generate(ctx, messages, toolDefs, model.ModelOptions{Temperature: 0.1})
 		if err != nil {
 			return nil, err
@@ -378,6 +382,7 @@ func (a *ReviewerAgent) Execute(ctx context.Context, h Harness, input string, cu
 		{Role: "user", Content: prompt},
 	}
 
+	h.NotifyProgress("Thinking", "Thinking...")
 	resp, err := p.Generate(ctx, messages, toolDefs, model.ModelOptions{Temperature: 0.1})
 	if err != nil {
 		return nil, err

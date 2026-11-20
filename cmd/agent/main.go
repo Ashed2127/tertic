@@ -1063,7 +1063,7 @@ func main() {
 			MaxConcurrentAgents: 1, // Sequential execution for low-RAM Android/Termux
 			SequentialOnly:      true,
 			OnProgress: func(role, status string) {
-				if role != "Action" {
+				if role != "Action" && role != "Thinking" {
 					return
 				}
 				activeProgressMu.Lock()
